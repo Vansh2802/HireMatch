@@ -32,8 +32,10 @@ def _heuristic_extract_job(job_title: str, job_description: str) -> dict:
 
 
 def extract_job_requirements(job_title: str, job_description: str) -> JobRequirements:
-    if settings.mock_llm and not settings.groq_api_key:
+    if settings.mock_llm:
         return JobRequirements(**_heuristic_extract_job(job_title, job_description))
+    if not settings.groq_api_key:
+        raise RuntimeError('GROQ_API_KEY is required when MOCK_LLM is false.')
 
     try:
         from groq import Groq
@@ -50,5 +52,5 @@ def extract_job_requirements(job_title: str, job_description: str) -> JobRequire
         payload = response.choices[0].message.content
         data = json.loads(payload)
         return JobRequirements(**data)
-    except Exception:
-        return JobRequirements(**_heuristic_extract_job(job_title, job_description))
+    except Exception as exc:
+        raise RuntimeError('Job requirement extraction failed. Enable MOCK_LLM for offline development.') from exc

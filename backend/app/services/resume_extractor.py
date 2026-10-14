@@ -31,8 +31,10 @@ def _heuristic_extract_resume(resume_text: str) -> dict:
 
 
 def extract_resume_profile(resume_text: str) -> Resume:
-    if settings.mock_llm and not settings.groq_api_key:
+    if settings.mock_llm:
         return Resume(**_heuristic_extract_resume(resume_text))
+    if not settings.groq_api_key:
+        raise RuntimeError('GROQ_API_KEY is required when MOCK_LLM is false.')
 
     try:
         from groq import Groq
@@ -49,5 +51,5 @@ def extract_resume_profile(resume_text: str) -> Resume:
         payload = response.choices[0].message.content
         data = json.loads(payload)
         return Resume(**data)
-    except Exception:
-        return Resume(**_heuristic_extract_resume(resume_text))
+    except Exception as exc:
+        raise RuntimeError('Resume extraction failed. Enable MOCK_LLM for offline development.') from exc

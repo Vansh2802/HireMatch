@@ -37,12 +37,24 @@ export type CreationResponse = {
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      ...(options.headers || {}),
-    },
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: options.signal ?? controller.signal,
+      headers: { ...(options.headers || {}) },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('The backend request timed out. Check that the API is running and try again.');
+    }
+    throw new Error('Unable to reach the HireMatch backend. Check that the API is running and try again.');
+  } finally {
+    window.clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     let message = 'Request failed';
@@ -63,7 +75,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export async function healthCheck() {
-  return request<{ status: string; app: string }>('/api/health');
+  return request<{ status: string; app: string; dependencies?: { database?: string; llm?: string } }>('/api/health');
 }
 
 export async function createEvaluation(jobTitle: string, jobDescription: string) {

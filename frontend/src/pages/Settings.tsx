@@ -19,13 +19,13 @@ export default function Settings() {
         <InfoCard
           title="Backend connection"
           icon={<ServerCog className="text-brand-700" />}
-          status={isLoading ? 'Checking…' : data?.status === 'ok' ? 'Connected' : 'Unavailable'}
-          description={error ? (error as Error).message : data ? 'FastAPI service is responding normally.' : 'Waiting for backend health status.'}
+          status={isLoading ? 'Checking…' : data?.status === 'ok' ? 'Connected' : 'Degraded'}
+          description={error ? (error as Error).message : data ? `API responding. Database: ${data.dependencies?.database ?? 'unknown'}.` : 'Waiting for backend health status.'}
         />
         <InfoCard
           title="LLM provider"
           icon={<CheckCircle2 className="text-brand-700" />}
-          status="Configured when API key is present"
+          status={isLoading ? 'Checking…' : data?.dependencies?.llm ?? 'Unknown'}
           description="The backend owns the LLM connection and never exposes provider secrets to the browser."
         />
       </div>

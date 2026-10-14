@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import List
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,7 +9,7 @@ class Settings(BaseSettings):
 
     app_name: str = Field(default='HireMatch', alias='APP_NAME')
     api_prefix: str = Field(default='/api', alias='API_PREFIX')
-    allowed_origins: List[str] = Field(default_factory=lambda: ['http://localhost:5173', 'http://localhost:3000'], alias='ALLOWED_ORIGINS')
+    allowed_origins: str = Field(default='http://localhost:5173,http://localhost:3000', alias='ALLOWED_ORIGINS')
     database_url: str = Field(default='sqlite:///./hirematch.db', alias='DATABASE_URL')
     groq_api_key: str | None = Field(default=None, alias='GROQ_API_KEY')
     groq_model: str = Field(default='openai/gpt-oss-120b', alias='GROQ_MODEL')
@@ -23,9 +21,7 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins_list(self) -> list[str]:
-        if isinstance(self.allowed_origins, str):
-            return [item.strip() for item in str(self.allowed_origins).split(',') if item.strip()]
-        return [str(origin).strip() for origin in self.allowed_origins if str(origin).strip()]
+        return [item.strip() for item in self.allowed_origins.split(',') if item.strip()]
 
 
 settings = Settings()

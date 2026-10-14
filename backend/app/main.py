@@ -5,9 +5,6 @@ from app.api.routes.candidates import router as candidates_router
 from app.api.routes.evaluations import router as evaluations_router
 from app.api.routes.health import router as health_router
 from app.core.config import settings
-from app.core.database import Base, engine
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.app_name, version='0.1.0', description='AI-powered resume evaluation and job matching platform.')
 

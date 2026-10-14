@@ -113,7 +113,7 @@ def upload_resumes(evaluation_id: int, files: list[UploadFile] = File(...), db: 
                 stored_file_path=None,
             )
             results.append({'id': candidate.id, 'status': 'completed', 'name': candidate.candidate_name, 'score': candidate.match_score})
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
             candidate = candidate_repo.create(
                 evaluation_id=evaluation.id,
                 candidate_name='Unparsed Candidate',

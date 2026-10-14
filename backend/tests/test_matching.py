@@ -13,3 +13,30 @@ def test_score_bounds_and_verdict():
     )
     assert 0 <= result['score'] <= 100
     assert result['verdict'] in {'Strong Match', 'Good Match', 'Partial Match', 'Low Match'}
+
+
+def test_zero_experience_requirement_does_not_fail():
+    result = calculate_match_score(
+        required_skills=[],
+        preferred_skills=[],
+        candidate_skills=['python'],
+        experience_years=2,
+        required_experience=0,
+    )
+
+    assert result['score'] == 100
+
+
+def test_unverified_qualifications_are_not_assumed():
+    result = calculate_match_score(
+        required_skills=['python'],
+        preferred_skills=[],
+        candidate_skills=['python'],
+        experience_years=3,
+        required_experience=3,
+        education_ok=None,
+        certs_ok=None,
+    )
+
+    assert result['details']['education_verified'] is None
+    assert result['details']['certifications_verified'] is None
