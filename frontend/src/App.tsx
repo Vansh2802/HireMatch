@@ -1,5 +1,6 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Activity, BriefcaseBusiness, FileText, LayoutDashboard, Settings as SettingsIcon } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import CreateEvaluation from './pages/CreateEvaluation';
@@ -7,10 +8,31 @@ import UploadResumes from './pages/UploadResumes';
 import EvaluationResults from './pages/EvaluationResults';
 import CandidateDetails from './pages/CandidateDetails';
 import Settings from './pages/Settings';
+import Login from './pages/Login';
+import { currentUser, logout } from './lib/api';
 
 const queryClient = new QueryClient();
 
 function AppShell() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const authQuery = useQuery({ queryKey: ['me'], queryFn: currentUser, retry: false, enabled: location.pathname !== '/login' });
+
+  useEffect(() => {
+    if (location.pathname !== '/login' && authQuery.error) {
+      navigate('/login', { replace: true });
+    }
+  }, [authQuery.error, location.pathname, navigate]);
+
+  if (location.pathname === '/login') {
+    return <Routes><Route path="/login" element={<Login />} /></Routes>;
+  }
+
+  if (authQuery.isPending || authQuery.error) {
+    return <div className="mx-auto mt-16 max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center text-slate-500">Checking your session…</div>;
+  }
+
   const navItems = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/evaluations/new', label: 'Create Evaluation', icon: FileText },
@@ -42,6 +64,13 @@ function AppShell() {
             <Activity size={16} className="text-brand-600" />
             Live backend
           </div>
+          <button
+            type="button"
+            onClick={async () => { await logout(); await queryClient.invalidateQueries({ queryKey: ['me'] }); navigate('/login'); }}
+            className="text-sm font-medium text-slate-600 hover:text-slate-900"
+          >
+            Sign out
+          </button>
         </div>
       </header>
 
@@ -53,6 +82,7 @@ function AppShell() {
           <Route path="/evaluations/:id/upload" element={<UploadResumes />} />
           <Route path="/candidates/:id" element={<CandidateDetails />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/login" element={<Login />} />
         </Routes>
       </main>
     </div>

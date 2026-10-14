@@ -34,6 +34,8 @@ export type CreationResponse = {
   structured_job?: Record<string, unknown> | null;
 };
 
+export type AuthUser = { id: number; email: string };
+
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -44,6 +46,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...options,
+      credentials: options.credentials ?? 'include',
       signal: options.signal ?? controller.signal,
       headers: { ...(options.headers || {}) },
     });
@@ -76,6 +79,30 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export async function healthCheck() {
   return request<{ status: string; app: string; dependencies?: { database?: string; llm?: string; provider?: string; model?: string; provider_connectivity?: string } }>('/api/health');
+}
+
+export async function login(email: string, password: string) {
+  return request<{ user: AuthUser }>('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function register(email: string, password: string) {
+  return request<{ user: AuthUser }>('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function currentUser() {
+  return request<AuthUser>('/api/auth/me');
+}
+
+export async function logout() {
+  return request<void>('/api/auth/logout', { method: 'POST' });
 }
 
 export async function createEvaluation(jobTitle: string, jobDescription: string) {

@@ -1,3 +1,4 @@
+from app.models.auth import AuthSession, User
 from app.models.evaluation import Candidate, Evaluation
 
-__all__ = ['Evaluation', 'Candidate']
+__all__ = ['AuthSession', 'Candidate', 'Evaluation', 'User']

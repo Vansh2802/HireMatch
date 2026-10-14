@@ -6,13 +6,17 @@ import io
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_current_user
+from app.core.config import settings
 from app.core.database import get_db
+from app.models.auth import User
 from app.models.evaluation import Evaluation
 from app.repositories.candidate_repository import CandidateRepository
 from app.repositories.evaluation_repository import EvaluationRepository
 from app.schemas.evaluation import EvaluationCreateRequest
+from app.schemas.job import JobRequirements
 from app.services.document_parser import parse_uploaded_document
-from app.services.file_validation import safe_delete_file
+from app.services.file_validation import read_limited_upload, safe_delete_file
 from app.services.job_extractor import extract_job_requirements
 from app.services.llm_service import LLMError
 from app.services.matching_service import match_candidate_to_job
@@ -22,7 +26,7 @@ router = APIRouter(prefix='/evaluations', tags=['evaluations'])
 
 
 @router.post('')
-def create_evaluation(payload: EvaluationCreateRequest, db: Session = Depends(get_db)):
+def create_evaluation(payload: EvaluationCreateRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     repo = EvaluationRepository(db)
     try:
         job = extract_job_requirements(payload.job_title, payload.job_description)
@@ -32,6 +36,7 @@ def create_evaluation(payload: EvaluationCreateRequest, db: Session = Depends(ge
         job_title=payload.job_title,
         job_description=payload.job_description,
         structured_job=job.model_dump(mode='json'),
+        user_id=user.id,
     )
     return {
         'id': evaluation.id,
@@ -42,9 +47,8 @@ def create_evaluation(payload: EvaluationCreateRequest, db: Session = Depends(ge
 
 
 @router.get('')
-def list_evaluations(db: Session = Depends(get_db)):
-    repo = EvaluationRepository(db)
-    evaluations = repo.list()
+def list_evaluations(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    evaluations = db.query(Evaluation).filter(Evaluation.user_id == user.id).order_by(Evaluation.created_at.desc()).all()
     result = []
     for item in evaluations:
         scores = [candidate.match_score for candidate in item.candidates if candidate.match_score is not None]
@@ -62,8 +66,8 @@ def list_evaluations(db: Session = Depends(get_db)):
 
 
 @router.get('/{evaluation_id}')
-def get_evaluation_details(evaluation_id: int, db: Session = Depends(get_db)):
-    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+def get_evaluation_details(evaluation_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id, Evaluation.user_id == user.id).first()
     if not evaluation:
         raise HTTPException(status_code=404, detail='Evaluation not found.')
     return {
@@ -89,19 +93,27 @@ def get_evaluation_details(evaluation_id: int, db: Session = Depends(get_db)):
 
 
 @router.post('/{evaluation_id}/resumes')
-def upload_resumes(evaluation_id: int, files: list[UploadFile] = File(...), db: Session = Depends(get_db)):
-    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+def upload_resumes(evaluation_id: int, files: list[UploadFile] = File(...), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if len(files) > settings.max_files_per_request:
+        raise HTTPException(status_code=413, detail=f'Too many files. Upload no more than {settings.max_files_per_request} resumes at a time.')
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id, Evaluation.user_id == user.id).first()
     if not evaluation:
         raise HTTPException(status_code=404, detail='Evaluation not found.')
+
+    try:
+        job = JobRequirements.model_validate(evaluation.structured_job or {})
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail='Evaluation requirements are unavailable.') from exc
 
     results = []
     candidate_repo = CandidateRepository(db)
     for upload in files or []:
         try:
-            file_bytes = upload.file.read()
+            file_bytes = read_limited_upload(upload.file)
             parsed = parse_uploaded_document(upload.filename or 'resume.pdf', file_bytes)
+            if len(parsed['text']) > settings.max_resume_text_chars:
+                raise ValueError('Resume text exceeds the processing limit.')
             resume = extract_resume_profile(parsed['text'])
-            job = extract_job_requirements(evaluation.job_title, evaluation.job_description)
             match_result = match_candidate_to_job(job, resume)
             candidate = candidate_repo.create(
                 evaluation_id=evaluation.id,
@@ -139,9 +151,10 @@ def list_candidates(
     evaluation_id: int,
     status: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id, Evaluation.user_id == user.id).first()
     if not evaluation:
         raise HTTPException(status_code=404, detail='Evaluation not found.')
     candidates = CandidateRepository(db).list_for_evaluation(evaluation_id, status=status, search=search)
@@ -160,8 +173,8 @@ def list_candidates(
 
 
 @router.get('/{evaluation_id}/export')
-def export_evaluation_csv(evaluation_id: int, db: Session = Depends(get_db)):
-    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+def export_evaluation_csv(evaluation_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id, Evaluation.user_id == user.id).first()
     if not evaluation:
         raise HTTPException(status_code=404, detail='Evaluation not found.')
 
@@ -174,8 +187,8 @@ def export_evaluation_csv(evaluation_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete('/{evaluation_id}')
-def delete_evaluation(evaluation_id: int, db: Session = Depends(get_db)):
-    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+def delete_evaluation(evaluation_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id, Evaluation.user_id == user.id).first()
     if not evaluation:
         raise HTTPException(status_code=404, detail='Evaluation not found.')
     for candidate in evaluation.candidates:

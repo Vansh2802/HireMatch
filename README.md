@@ -14,6 +14,7 @@ HireMatch is an AI-powered resume evaluation and job matching platform. It lets 
 - Backend: FastAPI + SQLAlchemy + Pydantic
 - Database: SQLite for direct local development, PostgreSQL 16 for Docker Compose
 - AI enrichment: OpenRouter-compatible chat completions with explicit deterministic mock mode
+- Authentication: Argon2 password hashes with server-side opaque sessions in HttpOnly cookies
 - Parsing: `pypdf` and `python-docx`
 - Frontend: React + TypeScript + Vite + Tailwind CSS + TanStack Query
 - Testing: pytest for backend and Vitest for frontend
@@ -58,9 +59,15 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=http://localhost:5173
 LLM_PROVIDER=openrouter
 LLM_TIMEOUT_SECONDS=30
+SESSION_COOKIE_NAME=hirematch_session
+SESSION_COOKIE_SECURE=false
 ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
 MAX_UPLOAD_SIZE_MB=10
+MAX_FILES_PER_REQUEST=10
 MAX_PAGES_PER_DOCUMENT=80
+MAX_JOB_DESCRIPTION_CHARS=12000
+MAX_RESUME_TEXT_CHARS=12000
+RATE_LIMIT_PER_MINUTE=20
 UPLOAD_DIR=uploads
 TEMP_DIR=temp
 MOCK_LLM=true
@@ -74,6 +81,7 @@ Notes:
 - The configured model must be an OpenRouter model identifier available to your account. The default is `openai/gpt-4o-mini`; change `OPENROUTER_MODEL` without editing code.
 - `DATABASE_URL` is used by direct local backend runs. Compose overrides it with the PostgreSQL service hostname `db`.
 - Never commit `.env`, uploaded resumes, temporary files, or database files.
+- Set `SESSION_COOKIE_SECURE=true` behind HTTPS in shared/production environments.
 
 ## Run the backend
 
@@ -102,6 +110,8 @@ npm run dev
 The Vite app will usually run on `http://localhost:5173`.
 
 For a non-default API location, set `VITE_API_URL` in `frontend/.env.local`. The default is `http://localhost:8000`.
+
+The first screen is the login/register flow. Passwords are hashed server-side; session tokens are opaque, stored as hashes in the database, and sent to the browser only as HttpOnly cookies. Private evaluations and candidates are filtered by owner on the backend.
 
 ## Docker Compose
 
@@ -153,6 +163,8 @@ $env:PYTHONPATH='backend'
 .\.venv\Scripts\python.exe -m pytest backend/tests -q
 ```
 
+Tests force `MOCK_LLM=true` and use an isolated ignored SQLite database, so they do not depend on developer credentials or existing application data.
+
 ## Frontend tests
 
 ```bash
@@ -181,7 +193,8 @@ alembic -c alembic.ini upgrade head
 - OpenRouter integration is optional for local development and can be replaced by explicit mock mode.
 - Resume parsing is heuristic and best-effort; it is suitable for local prototypes and internal tooling.
 - Local file storage is volume-backed in Compose but is not yet object storage or multi-tenant storage.
-- The application has no authentication or authorization; it is a local prototype and must not be exposed as a shared production service.
+- Authentication is suitable for this single-service prototype, but public deployment still needs HTTPS, secret management, account recovery, email verification, and operational session revocation controls.
+- The local in-memory rate limiter is per process and is not a distributed limiter across multiple workers.
 - Uploaded text is treated as untrusted input, but a production deployment should add stronger isolation, retention, and provider-side prompt controls.
 
 ## Troubleshooting

@@ -40,3 +40,16 @@ def test_unverified_qualifications_are_not_assumed():
 
     assert result['details']['education_verified'] is None
     assert result['details']['certifications_verified'] is None
+
+
+def test_unknown_experience_receives_no_partial_credit():
+    result = calculate_match_score(
+        required_skills=['python'],
+        preferred_skills=[],
+        candidate_skills=['python'],
+        experience_years=None,
+        required_experience=5,
+    )
+
+    assert result['details']['experience_score'] is None
+    assert result['score'] == 100

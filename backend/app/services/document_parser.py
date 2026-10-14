@@ -25,7 +25,10 @@ def extract_pdf_text(file_bytes: bytes) -> dict[str, Any]:
     with NamedTemporaryFile(dir=settings.temp_dir, suffix='.pdf') as temp_pdf:
         temp_pdf.write(file_bytes)
         temp_pdf.flush()
-        reader = PdfReader(temp_pdf.name)
+        try:
+            reader = PdfReader(temp_pdf.name)
+        except Exception as exc:
+            raise ValueError('The PDF file could not be parsed.') from exc
         if len(reader.pages) > settings.max_pages_per_document:
             raise ValueError(f'Document exceeds the {settings.max_pages_per_document} page limit.')
         pages = []
@@ -45,7 +48,10 @@ def extract_docx_text(file_bytes: bytes) -> dict[str, Any]:
     with NamedTemporaryFile(dir=settings.temp_dir, suffix='.docx') as temp_docx:
         temp_docx.write(file_bytes)
         temp_docx.flush()
-        document = DocxDocument(temp_docx.name)
+        try:
+            document = DocxDocument(temp_docx.name)
+        except Exception as exc:
+            raise ValueError('The DOCX file could not be parsed.') from exc
         paragraphs = []
         for paragraph in document.paragraphs:
             if paragraph.text.strip():

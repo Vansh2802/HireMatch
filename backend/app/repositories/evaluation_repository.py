@@ -9,8 +9,8 @@ class EvaluationRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, *, job_title: str, job_description: str, structured_job: dict | None) -> Evaluation:
-        evaluation = Evaluation(job_title=job_title, job_description=job_description, structured_job=structured_job, status='pending')
+    def create(self, *, job_title: str, job_description: str, structured_job: dict | None, user_id: int | None = None) -> Evaluation:
+        evaluation = Evaluation(job_title=job_title, job_description=job_description, structured_job=structured_job, status='pending', user_id=user_id)
         self.db.add(evaluation)
         self.db.commit()
         self.db.refresh(evaluation)

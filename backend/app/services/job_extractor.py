@@ -42,7 +42,7 @@ def extract_job_requirements(job_title: str, job_description: str) -> JobRequire
             },
             {
                 'role': 'user',
-                'content': f'Job title:\n<job_title>{job_title}</job_title>\nJob description:\n<job_description>{job_description[:12000]}</job_description>',
+                'content': f'Job title:\n<job_title>{job_title}</job_title>\nJob description:\n<job_description>{job_description[:settings.max_job_description_chars]}</job_description>',
             },
         ],
         JobRequirements,

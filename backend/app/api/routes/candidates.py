@@ -3,16 +3,18 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_current_user
 from app.core.database import get_db
-from app.models.evaluation import Candidate
+from app.models.auth import User
+from app.models.evaluation import Candidate, Evaluation
 from app.services.file_validation import safe_delete_file
 
 router = APIRouter(prefix='/candidates', tags=['candidates'])
 
 
 @router.get('/{candidate_id}')
-def get_candidate(candidate_id: int, db: Session = Depends(get_db)):
-    candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+def get_candidate(candidate_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    candidate = db.query(Candidate).join(Evaluation).filter(Candidate.id == candidate_id, Evaluation.user_id == user.id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail='Candidate not found.')
     return {
@@ -31,8 +33,8 @@ def get_candidate(candidate_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete('/{candidate_id}')
-def delete_candidate(candidate_id: int, db: Session = Depends(get_db)):
-    candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+def delete_candidate(candidate_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    candidate = db.query(Candidate).join(Evaluation).filter(Candidate.id == candidate_id, Evaluation.user_id == user.id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail='Candidate not found.')
     safe_delete_file(candidate.stored_file_path)

@@ -20,8 +20,6 @@ def calculate_match_score(
     experience_score = None
     if required_experience is not None and required_experience > 0 and experience_years is not None:
         experience_score = min(1.0, max(0.0, experience_years / float(required_experience)))
-    elif required_experience is not None and required_experience > 0 and experience_years is None:
-        experience_score = 0.5
 
     preferred_ratio = sum(1 for skill in preferred_skills if skill.lower().strip() in candidate_norm) / max(1, len(preferred_skills)) if preferred_skills else None
     components: list[tuple[float, float, str]] = []
@@ -29,8 +27,8 @@ def calculate_match_score(
         components.append((skill_ratio, 0.40, 'required_skills'))
     if preferred_skills:
         components.append((preferred_ratio or 0.0, 0.05, 'preferred_skills'))
-    if required_experience is not None and required_experience > 0:
-        components.append((experience_score if experience_score is not None else 0.5, 0.25, 'experience'))
+    if required_experience is not None and required_experience > 0 and experience_score is not None:
+        components.append((experience_score, 0.25, 'experience'))
     qualification_values = [value for value in (education_ok, certs_ok) if value is not None]
     if qualification_values:
         components.append((sum(1.0 if value else 0.0 for value in qualification_values) / len(qualification_values), 0.10, 'qualifications'))

@@ -71,9 +71,14 @@ def match_candidate_to_job(job: JobRequirements, resume: Resume) -> dict:
         'missing_skills': missing_skills,
         'unverified_requirements': [
             requirement for requirement, verified in (
+                ('experience', resume.total_experience_years if job.minimum_experience else True),
                 ('education', education_ok),
                 ('certifications', certs_ok),
-            ) if verified is None and ((requirement == 'education' and job.education_requirements) or (requirement == 'certifications' and job.relevant_certifications))
+            ) if verified is None and (
+                (requirement == 'experience' and job.minimum_experience)
+                or (requirement == 'education' and job.education_requirements)
+                or (requirement == 'certifications' and job.relevant_certifications)
+            )
         ],
         'preferred_skills_found': preferred_found,
         'relevant_experience_evidence': evidence,
@@ -83,6 +88,7 @@ def match_candidate_to_job(job: JobRequirements, resume: Resume) -> dict:
         ],
         'areas_for_review': [
             'Confirm role-specific nuances with recruiter',
+            *(['Experience duration is unavailable.'] if resume.total_experience_years is None and job.minimum_experience else []),
             *(['Education evidence is unavailable.'] if education_ok is None and job.education_requirements else []),
             *(['Certification evidence is unavailable.'] if certs_ok is None and job.relevant_certifications else []),
         ],

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 class EvaluationCreateRequest(BaseModel):
     job_title: str = Field(..., min_length=1)
-    job_description: str = Field(..., min_length=20)
+    job_description: str = Field(..., min_length=20, max_length=12000)
 
 
 class EvaluationResponse(BaseModel):

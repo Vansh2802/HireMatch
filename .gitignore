@@ -12,6 +12,7 @@ wheels/
 # Local configuration and runtime data
 .env
 *.db
+test_hirematch.db
 uploads/
 temp/
 

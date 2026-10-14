@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
+if TYPE_CHECKING:
+    from app.models.auth import User
+
 
 class Evaluation(Base):
     __tablename__ = 'evaluations'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     job_title: Mapped[str] = mapped_column(String, nullable=False)
     job_description: Mapped[str] = mapped_column(Text, nullable=False)
     structured_job: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -20,6 +25,7 @@ class Evaluation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     candidates: Mapped[list['Candidate']] = relationship(back_populates='evaluation', cascade='all, delete-orphan')
+    owner: Mapped['User | None'] = relationship(back_populates='evaluations')
 
 
 class Candidate(Base):
