@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+import csv
+import io
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.models.evaluation import Evaluation
+from app.repositories.candidate_repository import CandidateRepository
+from app.repositories.evaluation_repository import EvaluationRepository
+from app.schemas.evaluation import EvaluationCreateRequest
+from app.services.document_parser import parse_uploaded_document
+from app.services.file_validation import safe_delete_file
+from app.services.job_extractor import extract_job_requirements
+from app.services.matching_service import match_candidate_to_job
+from app.services.resume_extractor import extract_resume_profile
+
+router = APIRouter(prefix='/evaluations', tags=['evaluations'])
+
+
+@router.post('')
+def create_evaluation(payload: EvaluationCreateRequest, db: Session = Depends(get_db)):
+    repo = EvaluationRepository(db)
+    job = extract_job_requirements(payload.job_title, payload.job_description)
+    evaluation = repo.create(
+        job_title=payload.job_title,
+        job_description=payload.job_description,
+        structured_job=job.model_dump(mode='json'),
+    )
+    return {
+        'id': evaluation.id,
+        'job_title': evaluation.job_title,
+        'status': evaluation.status,
+        'structured_job': evaluation.structured_job,
+    }
+
+
+@router.get('')
+def list_evaluations(db: Session = Depends(get_db)):
+    repo = EvaluationRepository(db)
+    evaluations = repo.list()
+    result = []
+    for item in evaluations:
+        scores = [candidate.match_score for candidate in item.candidates if candidate.match_score is not None]
+        average_score = round(sum(scores) / len(scores), 2) if scores else None
+        result.append({
+            'id': item.id,
+            'job_title': item.job_title,
+            'status': item.status,
+            'created_at': item.created_at.isoformat(),
+            'updated_at': item.updated_at.isoformat(),
+            'candidate_count': len(item.candidates),
+            'average_score': average_score,
+        })
+    return result
+
+
+@router.get('/{evaluation_id}')
+def get_evaluation_details(evaluation_id: int, db: Session = Depends(get_db)):
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+    if not evaluation:
+        raise HTTPException(status_code=404, detail='Evaluation not found.')
+    return {
+        'id': evaluation.id,
+        'job_title': evaluation.job_title,
+        'job_description': evaluation.job_description,
+        'structured_job': evaluation.structured_job,
+        'status': evaluation.status,
+        'created_at': evaluation.created_at.isoformat(),
+        'updated_at': evaluation.updated_at.isoformat(),
+        'candidates': [
+            {
+                'id': candidate.id,
+                'candidate_name': candidate.candidate_name,
+                'match_score': candidate.match_score,
+                'verdict': candidate.verdict,
+                'processing_status': candidate.processing_status,
+                'error_message': candidate.error_message,
+            }
+            for candidate in evaluation.candidates
+        ],
+    }
+
+
+@router.post('/{evaluation_id}/resumes')
+def upload_resumes(evaluation_id: int, files: list[UploadFile] = File(...), db: Session = Depends(get_db)):
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+    if not evaluation:
+        raise HTTPException(status_code=404, detail='Evaluation not found.')
+
+    results = []
+    candidate_repo = CandidateRepository(db)
+    for upload in files or []:
+        try:
+            file_bytes = upload.file.read()
+            parsed = parse_uploaded_document(upload.filename or 'resume.pdf', file_bytes)
+            resume = extract_resume_profile(parsed['text'])
+            job = extract_job_requirements(evaluation.job_title, evaluation.job_description)
+            match_result = match_candidate_to_job(job, resume)
+            candidate = candidate_repo.create(
+                evaluation_id=evaluation.id,
+                candidate_name=resume.name or 'Candidate',
+                email=resume.email,
+                phone=resume.phone,
+                structured_resume=resume.model_dump(mode='json'),
+                match_score=match_result['score'],
+                verdict=match_result['verdict'],
+                evaluation_details=match_result,
+                processing_status='completed',
+                file_name=upload.filename,
+                stored_file_path=None,
+            )
+            results.append({'id': candidate.id, 'status': 'completed', 'name': candidate.candidate_name, 'score': candidate.match_score})
+        except ValueError as exc:
+            candidate = candidate_repo.create(
+                evaluation_id=evaluation.id,
+                candidate_name='Unparsed Candidate',
+                structured_resume={},
+                processing_status='failed',
+                error_message=str(exc),
+                file_name=upload.filename,
+                stored_file_path=None,
+            )
+            results.append({'id': candidate.id, 'status': 'failed', 'name': candidate.candidate_name, 'error': str(exc)})
+
+    evaluation.status = 'completed' if results else 'pending'
+    db.commit()
+    return {'evaluation_id': evaluation.id, 'results': results}
+
+
+@router.get('/{evaluation_id}/candidates')
+def list_candidates(
+    evaluation_id: int,
+    status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+    if not evaluation:
+        raise HTTPException(status_code=404, detail='Evaluation not found.')
+    candidates = CandidateRepository(db).list_for_evaluation(evaluation_id, status=status, search=search)
+    return [
+        {
+            'id': candidate.id,
+            'candidate_name': candidate.candidate_name,
+            'email': candidate.email,
+            'match_score': candidate.match_score,
+            'verdict': candidate.verdict,
+            'processing_status': candidate.processing_status,
+            'error_message': candidate.error_message,
+        }
+        for candidate in candidates
+    ]
+
+
+@router.get('/{evaluation_id}/export')
+def export_evaluation_csv(evaluation_id: int, db: Session = Depends(get_db)):
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+    if not evaluation:
+        raise HTTPException(status_code=404, detail='Evaluation not found.')
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['candidate_name', 'match_score', 'verdict', 'email'])
+    for candidate in evaluation.candidates:
+        writer.writerow([candidate.candidate_name, candidate.match_score or '', candidate.verdict or '', candidate.email or ''])
+    return {'csv': output.getvalue()}
+
+
+@router.delete('/{evaluation_id}')
+def delete_evaluation(evaluation_id: int, db: Session = Depends(get_db)):
+    evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
+    if not evaluation:
+        raise HTTPException(status_code=404, detail='Evaluation not found.')
+    for candidate in evaluation.candidates:
+        safe_delete_file(candidate.stored_file_path)
+    db.delete(evaluation)
+    db.commit()
+    return {'deleted': True, 'evaluation_id': evaluation_id}
