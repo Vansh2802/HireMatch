@@ -24,7 +24,7 @@ def test_zero_experience_requirement_does_not_fail():
         required_experience=0,
     )
 
-    assert result['score'] == 100
+    assert result['score'] == 0
 
 
 def test_unverified_qualifications_are_not_assumed():

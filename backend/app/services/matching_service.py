@@ -3,12 +3,13 @@ from __future__ import annotations
 from app.schemas.job import JobRequirements
 from app.schemas.resume import Resume
 from app.services.scoring_service import calculate_match_score
+from app.services.skill_normalizer import normalize_skill
 
 
 def match_candidate_to_job(job: JobRequirements, resume: Resume) -> dict:
-    candidate_skills = {skill.lower().strip() for skill in resume.skills if skill}
-    required_skills = [skill.lower().strip() for skill in job.required_skills]
-    preferred_skills = [skill.lower().strip() for skill in job.preferred_skills]
+    candidate_skills = {normalize_skill(skill) for skill in resume.skills if skill}
+    required_skills = [normalize_skill(skill) for skill in job.required_skills]
+    preferred_skills = [normalize_skill(skill) for skill in job.preferred_skills]
     resume_text = ' '.join(
         [
             *(experience.description or '' for experience in resume.experiences),

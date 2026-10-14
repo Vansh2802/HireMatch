@@ -16,10 +16,23 @@ def health_check() -> dict:
     except Exception:
         database_status = 'unavailable'
 
-    llm_status = 'mock' if settings.mock_llm else 'configured' if settings.groq_api_key else 'missing_credentials'
+    if settings.mock_llm:
+        llm_status = 'mock'
+    elif settings.llm_provider.lower() != 'openrouter':
+        llm_status = 'unsupported_provider'
+    elif settings.openrouter_api_key and settings.openrouter_model:
+        llm_status = 'configured'
+    else:
+        llm_status = 'missing_credentials'
     overall_status = 'ok' if database_status == 'ok' else 'degraded'
     return {
         'status': overall_status,
         'app': settings.app_name,
-        'dependencies': {'database': database_status, 'llm': llm_status},
+        'dependencies': {
+            'database': database_status,
+            'llm': llm_status,
+            'provider': settings.llm_provider,
+            'model': settings.openrouter_model if settings.openrouter_model else None,
+            'provider_connectivity': 'unknown',
+        },
     }

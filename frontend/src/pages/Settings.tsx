@@ -26,7 +26,7 @@ export default function Settings() {
           title="LLM provider"
           icon={<CheckCircle2 className="text-brand-700" />}
           status={isLoading ? 'Checking…' : data?.dependencies?.llm ?? 'Unknown'}
-          description="The backend owns the LLM connection and never exposes provider secrets to the browser."
+          description={data ? `${data.dependencies?.provider ?? 'Unknown'} / ${data.dependencies?.model ?? 'No model configured'}; connectivity: ${data.dependencies?.provider_connectivity ?? 'unknown'}.` : 'The backend owns the LLM connection and never exposes provider secrets to the browser.'}
         />
       </div>
 

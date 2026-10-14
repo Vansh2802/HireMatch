@@ -14,6 +14,7 @@ from app.schemas.evaluation import EvaluationCreateRequest
 from app.services.document_parser import parse_uploaded_document
 from app.services.file_validation import safe_delete_file
 from app.services.job_extractor import extract_job_requirements
+from app.services.llm_service import LLMError
 from app.services.matching_service import match_candidate_to_job
 from app.services.resume_extractor import extract_resume_profile
 
@@ -23,7 +24,10 @@ router = APIRouter(prefix='/evaluations', tags=['evaluations'])
 @router.post('')
 def create_evaluation(payload: EvaluationCreateRequest, db: Session = Depends(get_db)):
     repo = EvaluationRepository(db)
-    job = extract_job_requirements(payload.job_title, payload.job_description)
+    try:
+        job = extract_job_requirements(payload.job_title, payload.job_description)
+    except LLMError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     evaluation = repo.create(
         job_title=payload.job_title,
         job_description=payload.job_description,
@@ -113,7 +117,7 @@ def upload_resumes(evaluation_id: int, files: list[UploadFile] = File(...), db: 
                 stored_file_path=None,
             )
             results.append({'id': candidate.id, 'status': 'completed', 'name': candidate.candidate_name, 'score': candidate.match_score})
-        except (ValueError, RuntimeError) as exc:
+        except (ValueError, RuntimeError, LLMError) as exc:
             candidate = candidate_repo.create(
                 evaluation_id=evaluation.id,
                 candidate_name='Unparsed Candidate',

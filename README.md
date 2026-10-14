@@ -13,7 +13,7 @@ HireMatch is an AI-powered resume evaluation and job matching platform. It lets 
 
 - Backend: FastAPI + SQLAlchemy + Pydantic
 - Database: SQLite for direct local development, PostgreSQL 16 for Docker Compose
-- AI enrichment: Groq-compatible model access with explicit deterministic mock mode
+- AI enrichment: OpenRouter-compatible chat completions with explicit deterministic mock mode
 - Parsing: `pypdf` and `python-docx`
 - Frontend: React + TypeScript + Vite + Tailwind CSS + TanStack Query
 - Testing: pytest for backend and Vitest for frontend
@@ -52,8 +52,12 @@ DATABASE_URL=sqlite:///./hirematch.db
 POSTGRES_DB=hirematch
 POSTGRES_USER=hirematch
 POSTGRES_PASSWORD=change-me-for-shared-environments
-GROQ_API_KEY=
-GROQ_MODEL=openai/gpt-oss-120b
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=openai/gpt-4o-mini
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_SITE_URL=http://localhost:5173
+LLM_PROVIDER=openrouter
+LLM_TIMEOUT_SECONDS=30
 ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
 MAX_UPLOAD_SIZE_MB=10
 MAX_PAGES_PER_DOCUMENT=80
@@ -65,7 +69,9 @@ MOCK_LLM=true
 Notes:
 
 - `MOCK_LLM=true` always uses deterministic local extraction and reports `llm: mock` from the health endpoint.
-- `MOCK_LLM=false` requires `GROQ_API_KEY`; provider failures are reported as failed processing instead of fake successful analysis.
+- `MOCK_LLM=false` requires `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`; provider failures are reported as failed processing instead of fake successful analysis.
+- Obtain an API key from OpenRouter and keep it server-side. Never use a `VITE_` variable for this key.
+- The configured model must be an OpenRouter model identifier available to your account. The default is `openai/gpt-4o-mini`; change `OPENROUTER_MODEL` without editing code.
 - `DATABASE_URL` is used by direct local backend runs. Compose overrides it with the PostgreSQL service hostname `db`.
 - Never commit `.env`, uploaded resumes, temporary files, or database files.
 
@@ -125,7 +131,19 @@ Do not use `docker compose down -v` unless you explicitly intend to remove the d
 - Health: `http://localhost:8000/api/health`
 - OpenAPI UI: `http://localhost:8000/docs`
 
-The health response reports application status plus non-secret database and LLM states, for example `database: ok` and `llm: mock`.
+The health response reports application status plus non-secret database and LLM states, including provider, configured model, mock/configuration state, and `provider_connectivity: unknown`. It does not make a paid provider request during health checks.
+
+## Scoring model
+
+Scores are deterministic decision-support signals, not hiring decisions. When the corresponding job criterion is present, the default weights are:
+
+- Required skills: 40%
+- Experience: 25%
+- Responsibility alignment: 20%
+- Education and certifications combined: 10%
+- Preferred skills: 5%
+
+Unavailable criteria are excluded and the remaining applicable weights are normalized. Missing evidence is reported as unverified rather than treated as proof of absence or qualification. Scores are clamped to 0-100 and verdict thresholds are consistent with the final score.
 
 ## Backend tests
 
@@ -160,7 +178,7 @@ alembic -c alembic.ini upgrade head
 ## Known limitations
 
 - File storage is local-disk based rather than production cloud storage.
-- The Groq integration is optional and can be mocked locally.
+- OpenRouter integration is optional for local development and can be replaced by explicit mock mode.
 - Resume parsing is heuristic and best-effort; it is suitable for local prototypes and internal tooling.
 - Local file storage is volume-backed in Compose but is not yet object storage or multi-tenant storage.
 - The application has no authentication or authorization; it is a local prototype and must not be exposed as a shared production service.
@@ -171,6 +189,8 @@ alembic -c alembic.ini upgrade head
 - `Failed to fetch`: check `http://localhost:8000/api/health`, confirm the API container is `Up`, and verify `VITE_API_URL` points to the browser-reachable API URL.
 - PostgreSQL port conflict: the Compose database is intentionally not published to host port `5432`; stop another Compose project only if it is competing for the API port `8000`.
 - API exits on startup: inspect `docker compose logs --tail=200 api`; common causes are invalid environment values or a database that is not healthy yet.
+- OpenRouter authentication/model errors: verify `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, and `LLM_PROVIDER=openrouter`; the key is only read by the backend.
+- Structured-output errors: use a model that can follow JSON-only prompts. The client strips JSON fences, validates Pydantic schemas, and performs one bounded repair attempt.
 - Upload processing fails: check the per-file result in the response, then inspect the API logs. Invalid, empty, corrupt, oversized, and unsupported files are recorded individually.
 
 ## Manual setup notes

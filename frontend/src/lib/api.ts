@@ -75,7 +75,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export async function healthCheck() {
-  return request<{ status: string; app: string; dependencies?: { database?: string; llm?: string } }>('/api/health');
+  return request<{ status: string; app: string; dependencies?: { database?: string; llm?: string; provider?: string; model?: string; provider_connectivity?: string } }>('/api/health');
 }
 
 export async function createEvaluation(jobTitle: string, jobDescription: string) {
