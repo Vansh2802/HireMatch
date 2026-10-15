@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import SessionLocal, get_db
 from app.models.auth import User
 from app.models.evaluation import Evaluation
 from app.repositories.candidate_repository import CandidateRepository
@@ -23,6 +24,52 @@ from app.services.matching_service import match_candidate_to_job
 from app.services.resume_extractor import extract_resume_profile
 
 router = APIRouter(prefix='/evaluations', tags=['evaluations'])
+
+
+def _process_resume_upload(
+    *,
+    evaluation_id: int,
+    filename: str | None,
+    file_bytes: bytes,
+    job_payload: dict,
+) -> dict:
+    job = JobRequirements.model_validate(job_payload)
+    db = SessionLocal()
+    try:
+        candidate_repo = CandidateRepository(db)
+        try:
+            parsed = parse_uploaded_document(filename or 'resume.pdf', file_bytes)
+            if len(parsed['text']) > settings.max_resume_text_chars:
+                raise ValueError('Resume text exceeds the processing limit.')
+            resume = extract_resume_profile(parsed['text'])
+            match_result = match_candidate_to_job(job, resume)
+            candidate = candidate_repo.create(
+                evaluation_id=evaluation_id,
+                candidate_name=resume.name or 'Candidate',
+                email=resume.email,
+                phone=resume.phone,
+                structured_resume=resume.model_dump(mode='json'),
+                match_score=match_result['score'],
+                verdict=match_result['verdict'],
+                evaluation_details=match_result,
+                processing_status='completed',
+                file_name=filename,
+                stored_file_path=None,
+            )
+            return {'id': candidate.id, 'status': 'completed', 'name': candidate.candidate_name, 'score': candidate.match_score}
+        except (ValueError, RuntimeError, LLMError) as exc:
+            candidate = candidate_repo.create(
+                evaluation_id=evaluation_id,
+                candidate_name='Unparsed Candidate',
+                structured_resume={},
+                processing_status='failed',
+                error_message=str(exc),
+                file_name=filename,
+                stored_file_path=None,
+            )
+            return {'id': candidate.id, 'status': 'failed', 'name': candidate.candidate_name, 'error': str(exc)}
+    finally:
+        db.close()
 
 
 @router.post('')
@@ -93,7 +140,7 @@ def get_evaluation_details(evaluation_id: int, user: User = Depends(get_current_
 
 
 @router.post('/{evaluation_id}/resumes')
-def upload_resumes(evaluation_id: int, files: list[UploadFile] = File(...), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def upload_resumes(evaluation_id: int, files: list[UploadFile] = File(...), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if len(files) > settings.max_files_per_request:
         raise HTTPException(status_code=413, detail=f'Too many files. Upload no more than {settings.max_files_per_request} resumes at a time.')
     evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id, Evaluation.user_id == user.id).first()
@@ -105,41 +152,18 @@ def upload_resumes(evaluation_id: int, files: list[UploadFile] = File(...), user
     except Exception as exc:
         raise HTTPException(status_code=500, detail='Evaluation requirements are unavailable.') from exc
 
+    job_payload = job.model_dump(mode='json')
     results = []
-    candidate_repo = CandidateRepository(db)
     for upload in files or []:
-        try:
-            file_bytes = read_limited_upload(upload.file)
-            parsed = parse_uploaded_document(upload.filename or 'resume.pdf', file_bytes)
-            if len(parsed['text']) > settings.max_resume_text_chars:
-                raise ValueError('Resume text exceeds the processing limit.')
-            resume = extract_resume_profile(parsed['text'])
-            match_result = match_candidate_to_job(job, resume)
-            candidate = candidate_repo.create(
-                evaluation_id=evaluation.id,
-                candidate_name=resume.name or 'Candidate',
-                email=resume.email,
-                phone=resume.phone,
-                structured_resume=resume.model_dump(mode='json'),
-                match_score=match_result['score'],
-                verdict=match_result['verdict'],
-                evaluation_details=match_result,
-                processing_status='completed',
-                file_name=upload.filename,
-                stored_file_path=None,
-            )
-            results.append({'id': candidate.id, 'status': 'completed', 'name': candidate.candidate_name, 'score': candidate.match_score})
-        except (ValueError, RuntimeError, LLMError) as exc:
-            candidate = candidate_repo.create(
-                evaluation_id=evaluation.id,
-                candidate_name='Unparsed Candidate',
-                structured_resume={},
-                processing_status='failed',
-                error_message=str(exc),
-                file_name=upload.filename,
-                stored_file_path=None,
-            )
-            results.append({'id': candidate.id, 'status': 'failed', 'name': candidate.candidate_name, 'error': str(exc)})
+        file_bytes = read_limited_upload(upload.file)
+        result = await asyncio.to_thread(
+            _process_resume_upload,
+            evaluation_id=evaluation.id,
+            filename=upload.filename,
+            file_bytes=file_bytes,
+            job_payload=job_payload,
+        )
+        results.append(result)
 
     evaluation.status = 'completed' if results else 'pending'
     db.commit()

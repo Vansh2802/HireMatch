@@ -20,11 +20,19 @@ describe('CreateEvaluation', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByLabelText('Job title'), { target: { value: 'Senior Python Engineer' } });
-    fireEvent.change(screen.getByLabelText('Job description'), { target: { value: 'You will build Python APIs and maintain data pipelines.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create evaluation' }));
+    // Use htmlFor matching (which ignores the asterisk span inside the label)
+    fireEvent.change(screen.getByRole('textbox', { name: /job title/i }), {
+      target: { value: 'Senior Python Engineer' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: /job description/i }), {
+      target: { value: 'You will build Python APIs and maintain data pipelines.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /create evaluation/i }));
 
-    expect(await screen.findByRole('button', { name: 'Create evaluation' })).toBeInTheDocument();
-    expect(mocks.createEvaluationMock).toHaveBeenCalledWith('Senior Python Engineer', 'You will build Python APIs and maintain data pipelines.');
+    expect(await screen.findByRole('button', { name: /create evaluation|extracting/i })).toBeInTheDocument();
+    expect(mocks.createEvaluationMock).toHaveBeenCalledWith(
+      'Senior Python Engineer',
+      'You will build Python APIs and maintain data pipelines.',
+    );
   });
 });

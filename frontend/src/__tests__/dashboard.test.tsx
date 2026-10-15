@@ -30,6 +30,8 @@ describe('Dashboard', () => {
     renderDashboard();
 
     expect(await screen.findByText('No evaluations yet')).toBeInTheDocument();
-    expect(screen.getByText('Create your first role-based evaluation to compare candidates.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Create your first role-based evaluation to start comparing candidates with structured AI scoring.'),
+    ).toBeInTheDocument();
   });
 });

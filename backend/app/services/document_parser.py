@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import re
-from tempfile import NamedTemporaryFile
+from io import BytesIO
 from typing import Any
 
 from docx import Document as DocxDocument
 from pypdf import PdfReader
 
 from app.core.config import settings
-from app.services.file_validation import ensure_storage_dirs, validate_uploaded_file
+from app.services.file_validation import validate_uploaded_file
 
 
 def normalize_text(raw_text: str) -> str:
@@ -21,51 +21,43 @@ def normalize_text(raw_text: str) -> str:
 
 
 def extract_pdf_text(file_bytes: bytes) -> dict[str, Any]:
-    ensure_storage_dirs()
-    with NamedTemporaryFile(dir=settings.temp_dir, suffix='.pdf') as temp_pdf:
-        temp_pdf.write(file_bytes)
-        temp_pdf.flush()
-        try:
-            reader = PdfReader(temp_pdf.name)
-        except Exception as exc:
-            raise ValueError('The PDF file could not be parsed.') from exc
-        if len(reader.pages) > settings.max_pages_per_document:
-            raise ValueError(f'Document exceeds the {settings.max_pages_per_document} page limit.')
-        pages = []
-        for page in reader.pages:
-            text = page.extract_text() or ''
-            pages.append(normalize_text(text))
+    try:
+        reader = PdfReader(BytesIO(file_bytes))
+    except Exception as exc:
+        raise ValueError('The PDF file could not be parsed.') from exc
+    if len(reader.pages) > settings.max_pages_per_document:
+        raise ValueError(f'Document exceeds the {settings.max_pages_per_document} page limit.')
+    pages = []
+    for page in reader.pages:
+        text = page.extract_text() or ''
+        pages.append(normalize_text(text))
 
-        text = '\n\n'.join(page for page in pages if page)
-        warnings = []
-        if not text:
-            warnings.append('No selectable text found. OCR may be required for this PDF.')
-        return {'text': text, 'pages': len(pages), 'warnings': warnings}
+    text = '\n\n'.join(page for page in pages if page)
+    warnings = []
+    if not text:
+        warnings.append('No selectable text found. OCR may be required for this PDF.')
+    return {'text': text, 'pages': len(pages), 'warnings': warnings}
 
 
 def extract_docx_text(file_bytes: bytes) -> dict[str, Any]:
-    ensure_storage_dirs()
-    with NamedTemporaryFile(dir=settings.temp_dir, suffix='.docx') as temp_docx:
-        temp_docx.write(file_bytes)
-        temp_docx.flush()
-        try:
-            document = DocxDocument(temp_docx.name)
-        except Exception as exc:
-            raise ValueError('The DOCX file could not be parsed.') from exc
-        paragraphs = []
-        for paragraph in document.paragraphs:
-            if paragraph.text.strip():
-                paragraphs.append(normalize_text(paragraph.text))
-        for table in document.tables:
-            for row in table.rows:
-                text = ' | '.join(cell.text.strip() for cell in row.cells if cell.text.strip())
-                if text:
-                    paragraphs.append(normalize_text(text))
-        text = '\n\n'.join(paragraphs)
-        estimated_pages = max(1, len(paragraphs) // 20 + 1)
-        if estimated_pages > settings.max_pages_per_document:
-            raise ValueError(f'Document exceeds the {settings.max_pages_per_document} page limit.')
-        return {'text': text, 'pages': estimated_pages, 'warnings': [] if text else ['The document is empty or contains no readable text.']}
+    try:
+        document = DocxDocument(BytesIO(file_bytes))
+    except Exception as exc:
+        raise ValueError('The DOCX file could not be parsed.') from exc
+    paragraphs = []
+    for paragraph in document.paragraphs:
+        if paragraph.text.strip():
+            paragraphs.append(normalize_text(paragraph.text))
+    for table in document.tables:
+        for row in table.rows:
+            text = ' | '.join(cell.text.strip() for cell in row.cells if cell.text.strip())
+            if text:
+                paragraphs.append(normalize_text(text))
+    text = '\n\n'.join(paragraphs)
+    estimated_pages = max(1, len(paragraphs) // 20 + 1)
+    if estimated_pages > settings.max_pages_per_document:
+        raise ValueError(f'Document exceeds the {settings.max_pages_per_document} page limit.')
+    return {'text': text, 'pages': estimated_pages, 'warnings': [] if text else ['The document is empty or contains no readable text.']}
 
 
 def parse_uploaded_document(filename: str, file_bytes: bytes) -> dict[str, Any]:

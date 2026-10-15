@@ -38,9 +38,17 @@ export type AuthUser = { id: number; email: string };
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+/** Per-file budget: LLM structured extraction (2 repair attempts × 2 HTTP retries × default 30s) + parsing overhead. */
+export const RESUME_UPLOAD_TIMEOUT_PER_FILE_MS = 120_000;
+
+export function resumeUploadTimeoutMs(fileCount: number): number {
+  const count = Math.max(1, fileCount);
+  return RESUME_UPLOAD_TIMEOUT_PER_FILE_MS * count;
+}
+
+async function request<T>(path: string, options: RequestInit = {}, timeoutMs = 15000): Promise<T> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 15000);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   let response: Response;
   try {
@@ -52,7 +60,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('The backend request timed out. Check that the API is running and try again.');
+      throw new Error('The request timed out. For large batches, try uploading fewer files at once.');
     }
     throw new Error('Unable to reach the HireMatch backend. Check that the API is running and try again.');
   } finally {
@@ -106,11 +114,12 @@ export async function logout() {
 }
 
 export async function createEvaluation(jobTitle: string, jobDescription: string) {
+  // LLM job extraction can take up to 60 s with retries; use 90 s timeout
   return request<CreationResponse>('/api/evaluations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ job_title: jobTitle, job_description: jobDescription }),
-  });
+  }, 90000);
 }
 
 export async function listEvaluations() {
@@ -121,13 +130,52 @@ export async function fetchEvaluationDetail(id: number) {
   return request<EvaluationDetail>(`/api/evaluations/${id}`);
 }
 
-export async function uploadResumes(id: number, files: File[]) {
-  const formData = new FormData();
-  files.forEach((file) => formData.append('files', file));
-  return request<{ evaluation_id: number; results: Array<{ id: number; status: string; name: string; score?: number; error?: string }> }>(`/api/evaluations/${id}/resumes`, {
-    method: 'POST',
-    body: formData,
-  });
+export type ResumeUploadResult = {
+  id: number;
+  status: string;
+  name: string;
+  score?: number;
+  error?: string;
+};
+
+export async function uploadResumes(
+  id: number,
+  files: File[],
+  options?: {
+    onFileComplete?: (index: number, result: ResumeUploadResult) => void;
+    signal?: AbortSignal;
+  },
+) {
+  if (files.length === 0) {
+    throw new Error('Select at least one PDF or DOCX file.');
+  }
+
+  const allResults: ResumeUploadResult[] = [];
+
+  // One request per file so each gets a full LLM budget and the UI can reflect real progress.
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const formData = new FormData();
+    formData.append('files', file);
+
+    const response = await request<{ evaluation_id: number; results: ResumeUploadResult[] }>(
+      `/api/evaluations/${id}/resumes`,
+      {
+        method: 'POST',
+        body: formData,
+        signal: options?.signal,
+      },
+      RESUME_UPLOAD_TIMEOUT_PER_FILE_MS,
+    );
+
+    const result = response.results[0];
+    if (result) {
+      allResults.push(result);
+      options?.onFileComplete?.(index, result);
+    }
+  }
+
+  return { evaluation_id: id, results: allResults };
 }
 
 export async function fetchCandidate(id: number) {
