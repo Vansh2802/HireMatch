@@ -24,6 +24,7 @@ export default function EvaluationResults() {
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['evaluation-detail', evaluationId],
@@ -38,6 +39,7 @@ export default function EvaluationResults() {
 
   const handleExport = async () => {
     setExporting(true);
+    setExportError(null);
     try {
       const { csv } = await exportEvaluation(evaluationId);
       const blob = new Blob([csv], { type: 'text/csv' });
@@ -47,8 +49,8 @@ export default function EvaluationResults() {
       a.download = `hirematch-${evaluationId}-candidates.csv`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      // Silently fail export
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Unable to export this evaluation.');
     } finally {
       setExporting(false);
     }
@@ -88,11 +90,14 @@ export default function EvaluationResults() {
     if (sortKey === 'score') cmp = (b.match_score ?? -1) - (a.match_score ?? -1);
     if (sortKey === 'name') cmp = a.candidate_name.localeCompare(b.candidate_name);
     if (sortKey === 'status') cmp = a.processing_status.localeCompare(b.processing_status);
+    if (cmp === 0) cmp = a.id - b.id;
     return sortDir === 'asc' ? -cmp : cmp;
   });
 
   const completed = data.candidates.filter((c) => c.processing_status === 'completed');
-  const scores = completed.map((c) => c.match_score ?? 0).filter((s) => s > 0);
+  const scores = completed
+    .map((c) => c.match_score)
+    .filter((score): score is number => score !== null && score !== undefined);
   const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
   const topScore = scores.length ? Math.max(...scores) : null;
 
@@ -134,6 +139,8 @@ export default function EvaluationResults() {
           )}
         </div>
       </div>
+
+      {exportError && <div className="alert-error" role="alert">{exportError}</div>}
 
       {/* Summary metrics */}
       {completed.length > 0 && (

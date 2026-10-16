@@ -29,6 +29,7 @@ def get_candidate(candidate_id: int, user: User = Depends(get_current_user), db:
         'evaluation_details': candidate.evaluation_details,
         'processing_status': candidate.processing_status,
         'error_message': candidate.error_message,
+        'file_name': candidate.file_name,
     }
 
 

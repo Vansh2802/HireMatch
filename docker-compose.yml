@@ -19,7 +19,7 @@ services:
     environment:
       APP_NAME: ${APP_NAME:-HireMatch}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hirematch}:${POSTGRES_PASSWORD:-hirematch}@db:5432/${POSTGRES_DB:-hirematch}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
@@ -28,7 +28,7 @@ services:
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-hirematch_session}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
-      MOCK_LLM: ${MOCK_LLM:-true}
+      MOCK_LLM: ${MOCK_LLM:-false}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-10}
       MAX_FILES_PER_REQUEST: ${MAX_FILES_PER_REQUEST:-10}
       MAX_PAGES_PER_DOCUMENT: ${MAX_PAGES_PER_DOCUMENT:-80}

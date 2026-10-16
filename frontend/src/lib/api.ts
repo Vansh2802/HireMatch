@@ -48,23 +48,35 @@ export function resumeUploadTimeoutMs(fileCount: number): number {
 
 async function request<T>(path: string, options: RequestInit = {}, timeoutMs = 15000): Promise<T> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const callerSignal = options.signal;
+  const abortFromCaller = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener('abort', abortFromCaller, { once: true });
+  }
 
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...options,
       credentials: options.credentials ?? 'include',
-      signal: options.signal ?? controller.signal,
+      signal: controller.signal,
       headers: { ...(options.headers || {}) },
     });
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (timedOut) {
       throw new Error('The request timed out. For large batches, try uploading fewer files at once.');
     }
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new Error('Unable to reach the HireMatch backend. Check that the API is running and try again.');
   } finally {
     window.clearTimeout(timeout);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
   }
 
   if (!response.ok) {
@@ -158,17 +170,32 @@ export async function uploadResumes(
     const formData = new FormData();
     formData.append('files', file);
 
-    const response = await request<{ evaluation_id: number; results: ResumeUploadResult[] }>(
-      `/api/evaluations/${id}/resumes`,
-      {
-        method: 'POST',
-        body: formData,
-        signal: options?.signal,
-      },
-      RESUME_UPLOAD_TIMEOUT_PER_FILE_MS,
-    );
-
-    const result = response.results[0];
+    let result: ResumeUploadResult;
+    try {
+      const response = await request<{ evaluation_id: number; results: ResumeUploadResult[] }>(
+        `/api/evaluations/${id}/resumes`,
+        {
+          method: 'POST',
+          body: formData,
+          signal: options?.signal,
+        },
+        RESUME_UPLOAD_TIMEOUT_PER_FILE_MS,
+      );
+      result = response.results[0] ?? {
+        id: 0,
+        status: 'failed',
+        name: file.name,
+        error: 'The backend returned no result for this file.',
+      };
+    } catch (error) {
+      if (options?.signal?.aborted) throw error;
+      result = {
+        id: 0,
+        status: 'failed',
+        name: file.name,
+        error: error instanceof Error ? error.message : 'This file could not be processed.',
+      };
+    }
     if (result) {
       allResults.push(result);
       options?.onFileComplete?.(index, result);

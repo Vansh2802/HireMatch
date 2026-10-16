@@ -1,4 +1,7 @@
 from app.services.scoring_service import calculate_match_score
+from app.services.matching_service import match_candidate_to_job
+from app.schemas.job import JobRequirements
+from app.schemas.resume import Resume
 
 
 def test_score_bounds_and_verdict():
@@ -53,3 +56,36 @@ def test_unknown_experience_receives_no_partial_credit():
 
     assert result['details']['experience_score'] is None
     assert result['score'] == 100
+
+
+def test_score_normalizes_skill_aliases():
+    result = calculate_match_score(
+        required_skills=['JavaScript', 'Postgres'],
+        preferred_skills=[],
+        candidate_skills=['JS', 'PostgreSQL'],
+        experience_years=None,
+        required_experience=None,
+    )
+
+    assert result['details']['skill_ratio'] == 1.0
+
+
+def test_responsibility_matching_requires_meaningful_token_overlap():
+    job = JobRequirements(
+        role='Backend Engineer',
+        required_skills=[],
+        preferred_skills=[],
+        minimum_experience=None,
+        education_requirements=[],
+        responsibilities=['Build REST APIs'],
+        required_qualifications=[],
+        preferred_qualifications=[],
+        relevant_certifications=[],
+        seniority=None,
+        explicit_experience_requirements=None,
+    )
+    resume = Resume(name='Alex', experiences=[{'description': 'Built reports for the API team.'}])
+
+    result = match_candidate_to_job(job, resume)
+
+    assert result['details']['responsibility_alignment'] == 0.0

@@ -9,7 +9,10 @@ class Settings(BaseSettings):
 
     app_name: str = Field(default='HireMatch', alias='APP_NAME')
     api_prefix: str = Field(default='/api', alias='API_PREFIX')
-    allowed_origins: str = Field(default='http://localhost:5173,http://localhost:3000', alias='ALLOWED_ORIGINS')
+    allowed_origins: str = Field(
+        default='http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000',
+        alias='ALLOWED_ORIGINS',
+    )
     database_url: str = Field(default='sqlite:///./hirematch.db', alias='DATABASE_URL')
     openrouter_api_key: str | None = Field(default=None, alias='OPENROUTER_API_KEY')
     openrouter_model: str = Field(default='openai/gpt-4o-mini', alias='OPENROUTER_MODEL')
@@ -27,7 +30,7 @@ class Settings(BaseSettings):
     max_pages_per_document: int = Field(default=80, alias='MAX_PAGES_PER_DOCUMENT')
     upload_dir: str = Field(default='uploads', alias='UPLOAD_DIR')
     temp_dir: str = Field(default='temp', alias='TEMP_DIR')
-    mock_llm: bool = Field(default=True, alias='MOCK_LLM')
+    mock_llm: bool = Field(default=False, alias='MOCK_LLM')
 
     @property
     def allowed_origins_list(self) -> list[str]:

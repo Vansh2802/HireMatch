@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.schemas.job import JobRequirements
 from app.schemas.resume import Resume
 from app.services.scoring_service import calculate_match_score
@@ -17,9 +19,14 @@ def match_candidate_to_job(job: JobRequirements, resume: Resume) -> dict:
             *(technology for project in resume.projects for technology in project.technologies),
         ]
     ).lower()
+    resume_tokens = set(re.findall(r'[a-z0-9+#.]+', resume_text))
     responsibility_hits = sum(
-        1 for responsibility in job.responsibilities
-        if any(word in resume_text for word in responsibility.lower().split() if len(word) > 3)
+        1
+        for responsibility in job.responsibilities
+        if (
+            responsibility_tokens := set(re.findall(r'[a-z0-9+#.]+', responsibility.lower()))
+        )
+        and len(responsibility_tokens & resume_tokens) / len(responsibility_tokens) >= 0.5
     )
     responsibility_alignment = responsibility_hits / len(job.responsibilities) if job.responsibilities else None
 

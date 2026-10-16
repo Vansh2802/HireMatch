@@ -155,17 +155,38 @@ async def upload_resumes(evaluation_id: int, files: list[UploadFile] = File(...)
     job_payload = job.model_dump(mode='json')
     results = []
     for upload in files or []:
-        file_bytes = read_limited_upload(upload.file)
-        result = await asyncio.to_thread(
-            _process_resume_upload,
-            evaluation_id=evaluation.id,
-            filename=upload.filename,
-            file_bytes=file_bytes,
-            job_payload=job_payload,
-        )
+        try:
+            file_bytes = read_limited_upload(upload.file)
+            result = await asyncio.to_thread(
+                _process_resume_upload,
+                evaluation_id=evaluation.id,
+                filename=upload.filename,
+                file_bytes=file_bytes,
+                job_payload=job_payload,
+            )
+        except ValueError as exc:
+            candidate = CandidateRepository(db).create(
+                evaluation_id=evaluation.id,
+                candidate_name='Unparsed Candidate',
+                structured_resume={},
+                processing_status='failed',
+                error_message=str(exc),
+                file_name=upload.filename,
+                stored_file_path=None,
+            )
+            result = {
+                'id': candidate.id,
+                'status': 'failed',
+                'name': candidate.candidate_name,
+                'error': str(exc),
+            }
         results.append(result)
 
-    evaluation.status = 'completed' if results else 'pending'
+    evaluation.status = (
+        'completed'
+        if any(result['status'] == 'completed' for result in results)
+        else 'failed' if results else 'pending'
+    )
     db.commit()
     return {'evaluation_id': evaluation.id, 'results': results}
 

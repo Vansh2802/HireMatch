@@ -1,5 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
-import { useParams, Link } from 'react-router-dom';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
@@ -8,11 +9,12 @@ import {
   GraduationCap,
   Mail,
   Phone,
+  Trash2,
   TrendingUp,
   User,
   XCircle,
 } from 'lucide-react';
-import { fetchCandidate } from '../lib/api';
+import { deleteCandidate, fetchCandidate } from '../lib/api';
 
 interface StructuredResume {
   name?: string | null;
@@ -58,6 +60,10 @@ interface CandidateData {
 export default function CandidateDetails() {
   const { id } = useParams();
   const candidateId = Number(id ?? 0);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const { data: rawData, isLoading, error } = useQuery({
     queryKey: ['candidate', candidateId],
     queryFn: () => fetchCandidate(candidateId),
@@ -85,6 +91,21 @@ export default function CandidateDetails() {
     score === null ? 'bg-ivory-200' : score >= 70 ? 'bg-success-light' : score >= 45 ? 'bg-warning-light' : 'bg-error-light';
 
   const evaluationId = data.evaluation_id;
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete ${data.candidate_name}? This cannot be undone.`)) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteCandidate(candidateId);
+      await queryClient.invalidateQueries({ queryKey: ['evaluation-detail', evaluationId] });
+      navigate(evaluationId ? `/evaluations/${evaluationId}` : '/dashboard', { replace: true });
+    } catch (deleteRequestError) {
+      setDeleteError(deleteRequestError instanceof Error ? deleteRequestError.message : 'Unable to delete this candidate.');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -145,6 +166,14 @@ export default function CandidateDetails() {
               )}
             </div>
           )}
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border-light pt-4">
+          {deleteError && <p className="text-sm text-error" role="alert">{deleteError}</p>}
+          <button type="button" onClick={handleDelete} disabled={deleting} className="btn-secondary text-error">
+            <Trash2 size={14} />
+            {deleting ? 'Deleting…' : 'Delete candidate'}
+          </button>
         </div>
 
         {/* Overall explanation */}

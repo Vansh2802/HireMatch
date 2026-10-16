@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.skill_normalizer import normalize_skill
+
 
 def calculate_match_score(
     *,
@@ -12,8 +14,8 @@ def calculate_match_score(
     certs_ok: bool | None = None,
     responsibility_alignment: float | None = None,
 ) -> dict:
-    skill_norm = [s.lower().strip() for s in required_skills if s]
-    candidate_norm = {s.lower().strip() for s in candidate_skills if s}
+    skill_norm = [normalize_skill(skill) for skill in required_skills if skill]
+    candidate_norm = {normalize_skill(skill) for skill in candidate_skills if skill}
     hit_count = sum(1 for skill in skill_norm if skill in candidate_norm)
     skill_ratio = (hit_count / len(skill_norm)) if skill_norm else None
 
@@ -21,7 +23,7 @@ def calculate_match_score(
     if required_experience is not None and required_experience > 0 and experience_years is not None:
         experience_score = min(1.0, max(0.0, experience_years / float(required_experience)))
 
-    preferred_ratio = sum(1 for skill in preferred_skills if skill.lower().strip() in candidate_norm) / max(1, len(preferred_skills)) if preferred_skills else None
+    preferred_ratio = sum(1 for skill in preferred_skills if normalize_skill(skill) in candidate_norm) / max(1, len(preferred_skills)) if preferred_skills else None
     components: list[tuple[float, float, str]] = []
     if skill_ratio is not None:
         components.append((skill_ratio, 0.40, 'required_skills'))
