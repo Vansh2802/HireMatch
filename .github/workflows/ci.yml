@@ -21,12 +21,8 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Lint backend
         run: ruff check .
-      - name: Test backend
-        env:
-          DATABASE_URL: sqlite:///./test_hirematch.db
-          MOCK_LLM: 'true'
-          LLM_PROVIDER: openrouter
-        run: python -m pytest tests -q
+      - name: Test backend (unit, API, migrations; deterministic extractor, throwaway SQLite)
+        run: python -m pytest -q
 
   frontend:
     runs-on: ubuntu-latest
@@ -44,5 +40,14 @@ jobs:
         run: npm ci
       - name: Test frontend
         run: npm test
-      - name: Build frontend
+      - name: Type-check and build frontend
         run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose file
+        run: docker compose config --quiet
+      - name: Build images
+        run: docker compose build

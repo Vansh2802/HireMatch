@@ -3,12 +3,14 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import engine
+from app.services.matching_service import SCORING_VERSION
 
 router = APIRouter()
 
 
 @router.get('/health')
 def health_check() -> dict:
+    """Non-secret readiness information. Never calls the paid AI provider."""
     database_status = 'ok'
     try:
         with engine.connect() as connection:
@@ -16,23 +18,19 @@ def health_check() -> dict:
     except Exception:
         database_status = 'unavailable'
 
-    if settings.mock_llm:
-        llm_status = 'mock'
-    elif settings.llm_provider.lower() != 'openrouter':
-        llm_status = 'unsupported_provider'
-    elif settings.openrouter_api_key and settings.openrouter_model:
-        llm_status = 'configured'
-    else:
-        llm_status = 'missing_credentials'
-    overall_status = 'ok' if database_status == 'ok' else 'degraded'
     return {
-        'status': overall_status,
+        'status': 'ok' if database_status == 'ok' else 'degraded',
         'app': settings.app_name,
+        'scoring_version': SCORING_VERSION,
         'dependencies': {
             'database': database_status,
-            'llm': llm_status,
+            'llm': settings.llm_mode,
             'provider': settings.llm_provider,
-            'model': settings.openrouter_model if settings.openrouter_model else None,
+            'model': settings.openrouter_model or None,
             'provider_connectivity': 'unknown',
+        },
+        'limits': {
+            'max_upload_size_mb': settings.max_upload_size_mb,
+            'max_job_description_chars': settings.max_job_description_chars,
         },
     }

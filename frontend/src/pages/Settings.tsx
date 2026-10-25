@@ -1,163 +1,172 @@
-import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Database, RefreshCw, ServerCog, XCircle, Zap } from 'lucide-react';
-import { healthCheck } from '../lib/api';
+import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, errorMessage } from '../lib/api';
+import { formatDate } from '../lib/format';
+import { useSession } from '../lib/auth';
+import { Button } from '../components/ui/Button';
+import { ConfirmDialog, Dialog } from '../components/ui/Dialog';
+import { Field, Input } from '../components/ui/Field';
+import { PageHeader, Panel } from '../components/ui/Layout';
+import { InlineError, Skeleton } from '../components/ui/States';
+import { useToast } from '../components/ui/Toast';
 
 export default function Settings() {
-  const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ['health'],
-    queryFn: healthCheck,
-    staleTime: 30000,
+  const { data: user } = useSession();
+  const dashboard = useQuery({ queryKey: ['dashboard'], queryFn: api.dashboard });
+  const health = useQuery({ queryKey: ['health'], queryFn: api.health, staleTime: 5 * 60_000 });
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const notify = useToast();
+  const [signOutAllOpen, setSignOutAllOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  const signOutAll = useMutation({
+    mutationFn: api.logoutAll,
+    onSuccess: () => {
+      queryClient.clear();
+      queryClient.setQueryData(['me'], null);
+      notify('Signed out on all devices.', 'info');
+      navigate('/login', { replace: true });
+    },
+    onError: (error) => notify(errorMessage(error), 'error'),
   });
 
-  const dbOk = data?.dependencies?.database === 'ok';
-  const llmOk = data?.dependencies?.llm === 'ok' || data?.dependencies?.llm === 'available';
-  const backendOk = data?.status === 'ok';
+  const reader = health.data?.dependencies.llm === 'configured' ? `AI model (${health.data.dependencies.model})` : health.data?.dependencies.llm === 'mock' ? 'Built-in rules (no AI provider)' : 'Unavailable';
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="eyebrow mb-1">Configuration</p>
-          <h1 className="page-heading">Settings</h1>
-        </div>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="btn-secondary"
-          aria-label="Refresh health status"
-        >
-          <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
-          Refresh
-        </button>
+    <>
+      <PageHeader title="Settings & privacy" description="Manage your account and the data HireMatch keeps for you." />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Panel title="Account">
+          <dl className="space-y-3 text-sm">
+            <div><dt className="text-ink-soft">Email</dt><dd className="font-medium">{user?.email}</dd></div>
+            <div><dt className="text-ink-soft">Member since</dt><dd className="font-medium">{formatDate(user?.created_at)}</dd></div>
+          </dl>
+          <div className="mt-5 border-t border-line pt-4">
+            <h3 className="font-semibold">Sessions</h3>
+            <p className="mt-1 text-sm text-ink-soft">Signs you out on every browser and device, including this one.</p>
+            <Button variant="secondary" size="sm" className="mt-3" onClick={() => setSignOutAllOpen(true)}>Sign out everywhere</Button>
+          </div>
+        </Panel>
+
+        <ChangePassword />
+
+        <Panel title="Your data">
+          {dashboard.isPending ? (
+            <Skeleton className="h-16 w-full" />
+          ) : dashboard.data ? (
+            <ul className="grid grid-cols-3 gap-px overflow-hidden rounded border border-line bg-line text-center">
+              {[['Resumes', dashboard.data.counts.resumes], ['Jobs', dashboard.data.counts.jobs], ['Analyses', dashboard.data.counts.analyses]].map(([label, value]) => (
+                <li key={label} className="bg-paper py-3"><p className="type-condensed tabular text-2xl font-semibold">{value}</p><p className="text-xs text-ink-soft">{label}</p></li>
+              ))}
+            </ul>
+          ) : (
+            <InlineError message={errorMessage(dashboard.error)} />
+          )}
+          <ul className="mt-4 list-disc space-y-1.5 pl-5 text-sm text-ink-soft">
+            <li>Original resume files are not stored — only the text extracted from them.</li>
+            <li>Delete a resume from its page to remove all its versions and the analyses made from it.</li>
+            <li>Delete a job from its page; its analyses stay in your history with a copy of the job details.</li>
+            <li>Document reading on this server: <span className="font-medium text-ink">{health.isPending ? '…' : reader}</span>. Contact details are removed before text is sent to an AI provider.</li>
+          </ul>
+        </Panel>
+
+        <Panel title="Delete account" className="border-missing/40">
+          <p className="text-sm text-ink-soft">Permanently deletes your account, every resume and version, every saved job and note, and every analysis. This cannot be undone.</p>
+          <Button variant="danger" size="sm" className="mt-4" onClick={() => setDeleteOpen(true)}>Delete my account</Button>
+        </Panel>
       </div>
 
-      {/* Health overview */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <HealthCard
-          icon={<ServerCog size={18} />}
-          title="Backend API"
-          loading={isLoading}
-          ok={error ? false : backendOk}
-          statusLabel={isLoading ? 'Checking…' : error ? 'Unreachable' : backendOk ? 'Online' : 'Degraded'}
-          detail={
-            error
-              ? (error as Error).message
-              : data
-                ? `API is responding. Version 0.1.0.`
-                : 'Waiting for backend health status.'
-          }
-        />
-        <HealthCard
-          icon={<Database size={18} />}
-          title="Database"
-          loading={isLoading}
-          ok={error ? false : dbOk}
-          statusLabel={isLoading ? 'Checking…' : error ? 'Unknown' : dbOk ? 'Connected' : 'Degraded'}
-          detail={
-            data
-              ? `SQLite / PostgreSQL — status: ${data.dependencies?.database ?? 'unknown'}.`
-              : 'Database status will appear after health check.'
-          }
-        />
-        <HealthCard
-          icon={<Zap size={18} />}
-          title="LLM provider"
-          loading={isLoading}
-          ok={error ? false : llmOk}
-          statusLabel={isLoading ? 'Checking…' : error ? 'Unknown' : data?.dependencies?.llm ?? 'Unknown'}
-          detail={
-            data
-              ? `${data.dependencies?.provider ?? 'Unknown provider'} · ${data.dependencies?.model ?? 'No model'} · Connectivity: ${data.dependencies?.provider_connectivity ?? 'unknown'}.`
-              : 'The backend owns the LLM connection. API keys are never exposed to the browser.'
-          }
-        />
-      </div>
-
-      {/* Operational limits */}
-      <div className="card p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <Database size={16} className="text-brand-600" />
-          <h2 className="section-heading">Operational limits</h2>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[
-            { label: 'Supported file types', value: 'PDF, DOCX' },
-            { label: 'Max file size', value: '10 MB' },
-            { label: 'Max files per upload', value: '10 files' },
-            { label: 'Max resume text', value: '12,000 characters' },
-            { label: 'Max job description', value: '12,000 characters' },
-            { label: 'Max document pages', value: '80 pages' },
-          ].map(({ label, value }) => (
-            <div key={label} className="rounded bg-ivory-100 px-4 py-3">
-              <p className="text-xs text-ink-muted">{label}</p>
-              <p className="mt-0.5 text-sm font-semibold text-ink-primary">{value}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Security note */}
-      <div className="card p-5">
-        <div className="mb-3 flex items-center gap-2">
-          <CheckCircle2 size={16} className="text-success" />
-          <h2 className="section-heading">Security</h2>
-        </div>
-        <ul className="space-y-2 text-sm text-ink-secondary">
-          <li className="flex items-start gap-2">
-            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-            Candidate data is private to your account and never shared.
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-            LLM API keys are stored server-side and never sent to the browser.
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-            Session cookies are HTTP-only and scoped to this origin.
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-            Uploaded files are validated for type and size before processing.
-          </li>
-        </ul>
-      </div>
-    </div>
+      <ConfirmDialog
+        open={signOutAllOpen}
+        onClose={() => setSignOutAllOpen(false)}
+        title="Sign out everywhere?"
+        description="You will need to sign in again on every device."
+        confirmLabel="Sign out everywhere"
+        danger={false}
+        pending={signOutAll.isPending}
+        onConfirm={() => signOutAll.mutate()}
+      />
+      <DeleteAccountDialog open={deleteOpen} onClose={() => setDeleteOpen(false)} />
+    </>
   );
 }
 
-/* ── HEALTH CARD ── */
-function HealthCard({
-  icon,
-  title,
-  loading,
-  ok,
-  statusLabel,
-  detail,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  loading: boolean;
-  ok: boolean | undefined;
-  statusLabel: string;
-  detail: string;
-}) {
-  const statusColor =
-    loading ? 'text-ink-muted' : ok ? 'text-success' : 'text-error';
-  const StatusIcon = loading ? RefreshCw : ok ? CheckCircle2 : XCircle;
-
+function ChangePassword() {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const notify = useToast();
+  const change = useMutation({
+    mutationFn: () => api.changePassword(current, next),
+    onSuccess: () => {
+      setCurrent('');
+      setNext('');
+      setConfirm('');
+      notify('Password changed. Other devices have been signed out.');
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    if (next.length < 8) return setError('Use at least 8 characters for the new password.');
+    if (next !== confirm) return setError('The new passwords do not match.');
+    change.mutate();
+  };
   return (
-    <div className="card p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-ink-primary">
-          <span className="text-brand-600">{icon}</span>
-          <h3 className="text-sm font-semibold">{title}</h3>
-        </div>
-        <StatusIcon size={16} className={`${statusColor} ${loading ? 'animate-spin' : ''}`} />
-      </div>
-      <p className={`text-sm font-semibold ${statusColor}`}>{statusLabel}</p>
-      <p className="mt-1.5 text-xs leading-relaxed text-ink-muted">{detail}</p>
-    </div>
+    <Panel title="Change password">
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <Field label="Current password"><Input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} /></Field>
+        <Field label="New password" hint="At least 8 characters."><Input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} /></Field>
+        <Field label="Confirm new password"><Input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></Field>
+        <InlineError message={error} />
+        <Button type="submit" loading={change.isPending} disabled={!current || !next || !confirm}>Change password</Button>
+      </form>
+    </Panel>
   );
 }
+
+function DeleteAccountDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [typed, setTyped] = useState('');
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const remove = useMutation({
+    mutationFn: () => api.deleteAccount(password),
+    onSuccess: () => {
+      queryClient.clear();
+      queryClient.setQueryData(['me'], null);
+      navigate('/', { replace: true });
+    },
+  });
+  const close = () => {
+    setPassword('');
+    setTyped('');
+    remove.reset();
+    onClose();
+  };
+  return (
+    <Dialog
+      open={open}
+      onClose={remove.isPending ? () => undefined : close}
+      title="Delete your account?"
+      description="All of your resumes, jobs, notes and analyses will be permanently deleted."
+      footer={
+        <>
+          <Button variant="secondary" onClick={close} disabled={remove.isPending}>Cancel</Button>
+          <Button variant="danger" onClick={() => remove.mutate()} loading={remove.isPending} disabled={!password || typed !== 'DELETE'}>Delete account permanently</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Your password"><Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+        <Field label="Type DELETE to confirm"><Input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" /></Field>
+        {remove.isError && <InlineError message={errorMessage(remove.error)} />}
+      </div>
+    </Dialog>
+  );
+}
+

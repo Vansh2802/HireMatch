@@ -1,105 +1,84 @@
 # HireMatch
 
-HireMatch is an AI-powered resume evaluation and job matching platform. It lets recruiters or hiring teams:
+**The Right Resume. The Right Opportunity.**
 
-- create a job evaluation
-- upload candidate resumes in PDF or DOCX format
-- extract structured resume and job details
-- score candidates against the role
-- rank and review candidate fit
-- review candidate-level explanations and raw extraction data
+HireMatch helps job seekers see how well their resume matches a specific job description. It answers five questions:
 
-## Tech stack
+1. How well does my resume match this job?
+2. Which requirements does my resume already evidence?
+3. Which important requirements are missing or weakly evidenced?
+4. Why did HireMatch produce this result?
+5. What should I improve next?
 
-- Backend: FastAPI + SQLAlchemy + Pydantic
-- Database: SQLite for direct local development, PostgreSQL 16 for Docker Compose
-- AI enrichment: OpenRouter-compatible chat completions with explicit deterministic mock mode
-- Authentication: Argon2 password hashes with server-side opaque sessions in HttpOnly cookies
-- Parsing: `pypdf` and `python-docx`
-- Frontend: React + TypeScript + Vite + Tailwind CSS + TanStack Query
-- Testing: pytest for backend and Vitest for frontend
+A match score describes how clearly a resume evidences a posting's *stated* requirements. It is not a prediction of interviews, offers or hiring decisions.
 
-## Project structure
+## Features
 
-```text
-.
-├── .env.example
-├── .env
-├── README.md
-├── backend/
-│   ├── alembic/
-│   ├── app/
-│   ├── tests/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── alembic.ini
-├── frontend/
-│   ├── src/
-│   ├── package.json
-│   ├── vite.config.ts
-│   └── vitest.config.ts
-├── pyproject.toml
-└── src/
-    └── resume_parser_ai/
+- **Resume library with versions** — upload PDF/DOCX, review what was extracted, correct it (saved as a new version), upload revised files as new versions. Earlier analyses always keep the version they used.
+- **Saved jobs** — paste a posting; requirements are extracted with the line they came from, split into required/preferred, and marked *uncertain* when the posting is ambiguous. You can remove misread requirements or change their importance.
+- **Explainable analysis** — every requirement is checked against the resume text: *evidenced*, *partly evidenced*, *not found* (not proof you lack it), or *could not check* (excluded from the score). Each finding shows the resume excerpt behind it.
+- **Action plan** — prioritised gaps with why they matter and what to do, without encouraging invented experience.
+- **History, comparison and reports** — immutable analysis history, side-by-side comparison (same job across resume versions, or one resume across jobs), printable report.
+- **Application tracker** — stages (Interested → Archived), applied/follow-up dates and notes per job.
+- **Privacy controls** — original files are never stored; delete any record; change password; sign out everywhere; delete the account and all data.
+
+## Architecture
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS, TanStack Query, react-router, lucide-react |
+| Backend | FastAPI, Pydantic 2, SQLAlchemy 2, Alembic |
+| Database | PostgreSQL 16 (Docker) or SQLite (local development) |
+| Document reading | `pypdf`, `python-docx`; structured extraction by OpenRouter (or deterministic built-in rules) |
+| Auth | Argon2 password hashes, opaque server-side sessions in HttpOnly SameSite cookies |
+| Deploy | Docker Compose: `db` (Postgres), `api` (FastAPI), `web` (nginx serving the SPA and proxying `/api`) |
+
+```
+backend/app
+├── api/routes        auth, dashboard, resumes, jobs, analyses, health
+├── models            User, AuthSession, Resume, ResumeVersion, Job, Analysis
+├── schemas           Pydantic request/response and extraction contracts
+└── services
+    ├── document_parser / file_validation   upload validation and text extraction
+    ├── resume_extractor / job_extractor    heuristic + LLM extraction, cross-checked against the text
+    ├── skill_normalizer / text_analysis    skill taxonomy, sections, dates, degrees
+    ├── matching_service                    deterministic scoring (methodology v2.0)
+    ├── processing                          background extraction with persisted status
+    └── llm_service                         OpenRouter client (budgets, retries, safe errors)
+frontend/src
+├── components/ui     design-system primitives (Button, Field, Dialog, Toast, Badge, ScoreDial, …)
+├── components        AppShell, PublicLayout, AnalysisParts, ProfileEditor, JobForm, …
+├── pages             Landing, Methodology, Login, Dashboard, Analyze, Resumes, Jobs, Analyses, Compare, Settings, …
+└── lib               typed API client, types, formatting, polling
 ```
 
-## Environment variables
+### Processing model
 
-Copy `.env.example` to `.env` and update the values as needed:
+Uploads are validated and parsed synchronously (fast; bad files are rejected immediately with a clear message). Structured extraction — an LLM call in production — runs as a FastAPI background task; its status (`processing` / `ready` / `failed`) is stored on the record and the UI polls it. Failed extraction can be retried without re-uploading. Work interrupted by a restart is marked failed (retryable) on startup. Scoring itself is pure code and takes milliseconds. Repeating an analysis with identical inputs returns the existing result instead of creating a duplicate.
 
-```env
-APP_NAME=HireMatch
-DATABASE_URL=sqlite:///./hirematch.db
-POSTGRES_DB=hirematch
-POSTGRES_USER=hirematch
-POSTGRES_PASSWORD=change-me-for-shared-environments
-OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openai/gpt-4o-mini
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_SITE_URL=http://localhost:5173
-LLM_PROVIDER=openrouter
-LLM_TIMEOUT_SECONDS=30
-SESSION_COOKIE_NAME=hirematch_session
-SESSION_COOKIE_SECURE=false
-ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
-MAX_UPLOAD_SIZE_MB=10
-MAX_FILES_PER_REQUEST=10
-MAX_PAGES_PER_DOCUMENT=80
-MAX_JOB_DESCRIPTION_CHARS=12000
-MAX_RESUME_TEXT_CHARS=12000
-RATE_LIMIT_PER_MINUTE=20
-UPLOAD_DIR=uploads
-TEMP_DIR=temp
-MOCK_LLM=true
-```
+### Scoring (methodology v2.0)
 
-Notes:
+See the in-app page **How scoring works** (`/how-it-works`). In short: required skills 45%, experience 20%, responsibilities 15%, education & certifications 10%, preferred skills 10%; components with no requirements are excluded and the rest renormalised; uncertain/preferred items count half; unverifiable requirements are excluded rather than scored; below 40% evidence coverage no score is produced. The scoring version is stored with every analysis.
 
-- `MOCK_LLM=true` always uses deterministic local extraction and reports `llm: mock` from the health endpoint.
-- `MOCK_LLM=false` requires `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`; provider failures are reported as failed processing instead of fake successful analysis.
-- Obtain an API key from OpenRouter and keep it server-side. Never use a `VITE_` variable for this key.
-- The configured model must be an OpenRouter model identifier available to your account. The default is `openai/gpt-4o-mini`; change `OPENROUTER_MODEL` without editing code.
-- `DATABASE_URL` is used by direct local backend runs. Compose overrides it with the PostgreSQL service hostname `db`.
-- Never commit `.env`, uploaded resumes, temporary files, or database files.
-- Set `SESSION_COOKIE_SECURE=true` behind HTTPS in shared/production environments.
+## Run locally
 
-## Run the backend
-
-From the repository root:
+Requirements: Python 3.11+, Node 22+.
 
 ```bash
-$env:PYTHONPATH='backend'
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+cp .env.example .env            # MOCK_LLM=true works without any AI provider
+python -m venv .venv
+.venv/Scripts/pip install -r backend/requirements.txt   # macOS/Linux: .venv/bin/pip
 ```
 
-If you are using a Unix-like shell:
+Backend (from `backend/`):
 
 ```bash
-export PYTHONPATH=backend
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+cd backend
+../.venv/Scripts/python -m alembic upgrade head
+../.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
 ```
 
-## Run the frontend
+Frontend (in another terminal):
 
 ```bash
 cd frontend
@@ -107,109 +86,46 @@ npm install
 npm run dev
 ```
 
-The Vite app will usually run on `http://localhost:5173`.
+Open http://localhost:5173. Vite proxies `/api` to `http://127.0.0.1:8000` (override with `VITE_DEV_API_PROXY`), so the browser talks to one origin.
 
-For a non-default API location, set `VITE_API_URL` in `frontend/.env.local`. The default is `http://localhost:8000`.
+> The backend reads the repository-root `.env` (or `backend/.env`, which takes priority). With the default `DATABASE_URL`, the SQLite file is created next to where you start the server.
 
-The first screen is the login/register flow. Passwords are hashed server-side; session tokens are opaque, stored as hashes in the database, and sent to the browser only as HttpOnly cookies. Private evaluations and candidates are filtered by owner on the backend.
+### Docker Compose
 
-## Docker Compose
-
-Docker Desktop must be running. From the repository root:
-
-```powershell
-docker compose config
+```bash
 docker compose up --build -d
-docker compose ps
-docker compose logs --tail=200 api
-docker compose logs --tail=200 db
 ```
 
-The API container waits for PostgreSQL health, runs `alembic upgrade head`, and then starts FastAPI. PostgreSQL is private to the Compose network and persists in the `postgres_data` volume. The API is exposed at `http://localhost:8000`; the separately started Vite frontend uses that host URL.
+- App: http://localhost:8080 (nginx serves the SPA and proxies `/api`)
+- API docs: http://localhost:8000/docs (disabled when `ENVIRONMENT=production`)
+- Ports are configurable with `WEB_PORT` / `API_PORT`.
 
-Stop the stack without deleting data:
+The API runs `alembic upgrade head` on start. Do not use `docker compose down -v` unless you intend to delete the database volume.
 
-```powershell
-docker compose down
-```
+### AI provider
 
-Do not use `docker compose down -v` unless you explicitly intend to remove the database and uploaded-file volumes.
+Set `MOCK_LLM=false`, `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` (default `openai/gpt-4o-mini`). The key stays on the server. Contact details are redacted before resume text is sent. Model output is validated against Pydantic schemas, skills not present in the document are dropped, and requirement excerpts that cannot be found in the posting are marked uncertain. Provider errors are mapped to safe messages; transient failures are retried with backoff inside a total time budget (`LLM_TOTAL_BUDGET_SECONDS`).
 
-## Health and API documentation
-
-- Root: `http://localhost:8000/`
-- Health: `http://localhost:8000/api/health`
-- OpenAPI UI: `http://localhost:8000/docs`
-
-The health response reports application status plus non-secret database and LLM states, including provider, configured model, mock/configuration state, and `provider_connectivity: unknown`. It does not make a paid provider request during health checks.
-
-## Scoring model
-
-Scores are deterministic decision-support signals, not hiring decisions. When the corresponding job criterion is present, the default weights are:
-
-- Required skills: 40%
-- Experience: 25%
-- Responsibility alignment: 20%
-- Education and certifications combined: 10%
-- Preferred skills: 5%
-
-Unavailable criteria are excluded and the remaining applicable weights are normalized. Missing evidence is reported as unverified rather than treated as proof of absence or qualification. Scores are clamped to 0-100 and verdict thresholds are consistent with the final score.
-
-## Backend tests
+## Tests
 
 ```bash
-cd .
-$env:PYTHONPATH='backend'
-.\.venv\Scripts\python.exe -m pytest backend/tests -q
+cd backend && ../.venv/Scripts/python -m pytest -q     # unit, API, access control, migrations
+cd backend && ../.venv/Scripts/python -m ruff check .
+cd frontend && npm test                                 # component, routing, API client
+cd frontend && npm run build                            # type-check + production build
 ```
 
-Tests force `MOCK_LLM=true` and use an isolated ignored SQLite database, so they do not depend on developer credentials or existing application data.
-
-## Frontend tests
-
-```bash
-cd frontend
-npm test
-```
-
-## Build check
-
-```bash
-cd frontend
-npm run build
-```
+Backend tests always use a throwaway SQLite file and the deterministic extractor — never a developer database or the paid provider (`tests/conftest.py` refuses to run against a non-test database).
 
 ## Migrations
 
-Compose runs migrations automatically. For direct local backend work, set `DATABASE_URL` and run from `backend`:
-
-```powershell
-alembic -c alembic.ini upgrade head
-```
+`20261025_03_job_seeker_model` adds `resumes`, `resume_versions`, `jobs` and `analyses` and converts data from the earlier recruiter-oriented `evaluations`/`candidates` tables (owned rows only). The legacy tables are left untouched so nothing is lost; drop them in a later migration once you have verified the converted data. Imported analyses are labelled as scoring method v1.0.
 
 ## Known limitations
 
-- File storage is local-disk based rather than production cloud storage.
-- OpenRouter integration is optional for local development and can be replaced by explicit mock mode.
-- Resume parsing is heuristic and best-effort; it is suitable for local prototypes and internal tooling.
-- Local file storage is volume-backed in Compose but is not yet object storage or multi-tenant storage.
-- Authentication is suitable for this single-service prototype, but public deployment still needs HTTPS, secret management, account recovery, email verification, and operational session revocation controls.
-- The local in-memory rate limiter is per process and is not a distributed limiter across multiple workers.
-- Uploaded text is treated as untrusted input, but a production deployment should add stronger isolation, retention, and provider-side prompt controls.
-
-## Troubleshooting
-
-- `Failed to fetch`: check `http://localhost:8000/api/health`, confirm the API container is `Up`, and verify `VITE_API_URL` points to the browser-reachable API URL.
-- PostgreSQL port conflict: the Compose database is intentionally not published to host port `5432`; stop another Compose project only if it is competing for the API port `8000`.
-- API exits on startup: inspect `docker compose logs --tail=200 api`; common causes are invalid environment values or a database that is not healthy yet.
-- OpenRouter authentication/model errors: verify `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, and `LLM_PROVIDER=openrouter`; the key is only read by the backend.
-- Structured-output errors: use a model that can follow JSON-only prompts. The client strips JSON fences, validates Pydantic schemas, and performs one bounded repair attempt.
-- Upload processing fails: check the per-file result in the response, then inspect the API logs. Invalid, empty, corrupt, oversized, and unsupported files are recorded individually.
-
-## Manual setup notes
-
-1. Create a `.env` file from `.env.example`.
-2. Install Python dependencies in the project virtual environment.
-3. Install frontend dependencies with `npm install` in the `frontend` directory.
-4. Start the backend and frontend in separate terminals.
-5. Open the frontend in the browser and create an evaluation to begin uploading candidate documents.
+- Skill matching relies on a curated taxonomy with aliases; very new or niche tools may be missed by the built-in rules (the LLM path extracts them, but they are still matched literally).
+- Responsibility matching compares wording, so equivalent work described differently may be reported as not found.
+- Scanned (image-only) PDFs are rejected; there is no OCR.
+- The rate limiter is in-memory and per process; use a shared store for multiple workers.
+- Background extraction runs in the API process; a dedicated queue would be needed for high volume.
+- No email verification or password reset flow yet.

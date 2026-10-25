@@ -1,222 +1,170 @@
-export type EvaluationItem = {
-  id: number;
-  job_title: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  candidate_count: number;
-  average_score?: number;
-};
+import type {
+  Analysis,
+  AnalysisListItem,
+  ApplicationStage,
+  AuthUser,
+  Dashboard,
+  Health,
+  Importance,
+  Job,
+  JobListItem,
+  Page,
+  ResumeDetail,
+  ResumeProfile,
+  ResumeSummary,
+  ResumeVersion,
+} from './types';
 
-export type CandidateSummary = {
-  id: number;
-  candidate_name: string;
-  match_score?: number | null;
-  verdict?: string | null;
-  processing_status: string;
-  email?: string | null;
-  error_message?: string | null;
-};
+// Same-origin by default (Vite proxies /api in development, nginx in Docker).
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+const DEFAULT_TIMEOUT_MS = 20_000;
+/** Uploads only parse the document synchronously; extraction continues in the background. */
+export const UPLOAD_TIMEOUT_MS = 90_000;
 
-export type EvaluationDetail = {
-  id: number;
-  job_title: string;
-  job_description: string;
-  structured_job?: Record<string, unknown> | null;
-  status: string;
-  candidates: CandidateSummary[];
-};
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly data?: unknown,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
 
-export type CreationResponse = {
-  id: number;
-  job_title: string;
-  status: string;
-  structured_job?: Record<string, unknown> | null;
-};
-
-export type AuthUser = { id: number; email: string };
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
-/** Per-file budget: LLM structured extraction (2 repair attempts × 2 HTTP retries × default 30s) + parsing overhead. */
-export const RESUME_UPLOAD_TIMEOUT_PER_FILE_MS = 120_000;
-
-export function resumeUploadTimeoutMs(fileCount: number): number {
-  const count = Math.max(1, fileCount);
-  return RESUME_UPLOAD_TIMEOUT_PER_FILE_MS * count;
+  get isNetwork() {
+    return this.status === 0;
+  }
 }
 
-async function request<T>(path: string, options: RequestInit = {}, timeoutMs = 15000): Promise<T> {
+/** Fired when the server says the session is gone, so the app can send the user to sign in. */
+export const SESSION_EXPIRED_EVENT = 'hirematch:session-expired';
+
+type RequestOptions = Omit<RequestInit, 'body'> & { json?: unknown; body?: BodyInit; timeoutMs?: number; quiet401?: boolean };
+
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { json, timeoutMs = DEFAULT_TIMEOUT_MS, quiet401, headers, signal, ...rest } = options;
   const controller = new AbortController();
   let timedOut = false;
-  const timeout = window.setTimeout(() => {
+  const timer = window.setTimeout(() => {
     timedOut = true;
     controller.abort();
   }, timeoutMs);
-  const callerSignal = options.signal;
-  const abortFromCaller = () => controller.abort();
-  if (callerSignal) {
-    if (callerSignal.aborted) controller.abort();
-    else callerSignal.addEventListener('abort', abortFromCaller, { once: true });
-  }
+  const relay = () => controller.abort();
+  signal?.addEventListener('abort', relay, { once: true });
 
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      credentials: options.credentials ?? 'include',
+      ...rest,
+      credentials: 'include',
       signal: controller.signal,
-      headers: { ...(options.headers || {}) },
+      headers: { ...(json !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(headers || {}) },
+      body: json !== undefined ? JSON.stringify(json) : rest.method && rest.method !== 'GET' ? options.body : undefined,
     });
   } catch (error) {
-    if (timedOut) {
-      throw new Error('The request timed out. For large batches, try uploading fewer files at once.');
-    }
-    if (error instanceof DOMException && error.name === 'AbortError') throw error;
-    throw new Error('Unable to reach the HireMatch backend. Check that the API is running and try again.');
+    if (signal?.aborted) throw error;
+    if (timedOut) throw new ApiError('The server took too long to respond. Check your connection and try again.', 0);
+    throw new ApiError('Cannot reach HireMatch. Check your connection and try again.', 0);
   } finally {
-    window.clearTimeout(timeout);
-    callerSignal?.removeEventListener('abort', abortFromCaller);
+    window.clearTimeout(timer);
+    signal?.removeEventListener('abort', relay);
+  }
+
+  if (response.status === 204) return undefined as T;
+
+  let payload: unknown = null;
+  const text = await response.text();
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
   }
 
   if (!response.ok) {
-    let message = 'Request failed';
-    try {
-      const payload = await response.json();
-      message = payload.detail || payload.error || message;
-    } catch {
-      message = response.statusText || message;
-    }
-    throw new Error(message);
+    const detail = (payload as { detail?: unknown } | null)?.detail;
+    let message: string;
+    if (typeof detail === 'string') message = detail;
+    else if (detail && typeof detail === 'object' && 'message' in detail) message = String((detail as { message: unknown }).message);
+    else if (response.status >= 500) message = 'The server ran into a problem. Please try again.';
+    else message = `Request failed (${response.status}).`;
+    if (response.status === 401 && !quiet401) window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    throw new ApiError(message, response.status, detail);
   }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
+  return payload as T;
 }
 
-export async function healthCheck() {
-  return request<{ status: string; app: string; dependencies?: { database?: string; llm?: string; provider?: string; model?: string; provider_connectivity?: string } }>('/api/health');
-}
-
-export async function login(email: string, password: string) {
-  return request<{ user: AuthUser }>('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+const qs = (params: Record<string, string | number | undefined | null>) => {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') search.set(key, String(value));
   });
-}
-
-export async function register(email: string, password: string) {
-  return request<{ user: AuthUser }>('/api/auth/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-}
-
-export async function currentUser() {
-  return request<AuthUser>('/api/auth/me');
-}
-
-export async function logout() {
-  return request<void>('/api/auth/logout', { method: 'POST' });
-}
-
-export async function createEvaluation(jobTitle: string, jobDescription: string) {
-  // LLM job extraction can take up to 60 s with retries; use 90 s timeout
-  return request<CreationResponse>('/api/evaluations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job_title: jobTitle, job_description: jobDescription }),
-  }, 90000);
-}
-
-export async function listEvaluations() {
-  return request<EvaluationItem[]>('/api/evaluations');
-}
-
-export async function fetchEvaluationDetail(id: number) {
-  return request<EvaluationDetail>(`/api/evaluations/${id}`);
-}
-
-export type ResumeUploadResult = {
-  id: number;
-  status: string;
-  name: string;
-  score?: number;
-  error?: string;
+  const value = search.toString();
+  return value ? `?${value}` : '';
 };
 
-export async function uploadResumes(
-  id: number,
-  files: File[],
-  options?: {
-    onFileComplete?: (index: number, result: ResumeUploadResult) => void;
-    signal?: AbortSignal;
+export const api = {
+  health: () => request<Health>('/api/health'),
+
+  // Auth
+  session: () => request<{ user: AuthUser | null }>('/api/auth/session'),
+  login: (email: string, password: string) => request<{ user: AuthUser }>('/api/auth/login', { method: 'POST', json: { email, password }, quiet401: true }),
+  register: (email: string, password: string) => request<{ user: AuthUser }>('/api/auth/register', { method: 'POST', json: { email, password } }),
+  logout: () => request<void>('/api/auth/logout', { method: 'POST', quiet401: true }),
+  logoutAll: () => request<void>('/api/auth/logout-all', { method: 'POST' }),
+  changePassword: (current_password: string, new_password: string) =>
+    request<void>('/api/auth/change-password', { method: 'POST', json: { current_password, new_password } }),
+  deleteAccount: (password: string) => request<void>('/api/auth/account', { method: 'DELETE', json: { password, confirm: 'DELETE' } }),
+
+  dashboard: () => request<Dashboard>('/api/dashboard'),
+  dismissOnboarding: () => request<void>('/api/dashboard/onboarding/dismiss', { method: 'POST' }),
+
+  // Resumes
+  resumes: (params: { q?: string; sort?: string; limit?: number; offset?: number } = {}) => request<Page<ResumeSummary>>(`/api/resumes${qs(params)}`),
+  resume: (id: number) => request<ResumeDetail>(`/api/resumes/${id}`),
+  uploadResume: (file: File, title?: string) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (title) form.append('title', title);
+    return request<ResumeDetail>('/api/resumes', { method: 'POST', body: form, timeoutMs: UPLOAD_TIMEOUT_MS });
   },
-) {
-  if (files.length === 0) {
-    throw new Error('Select at least one PDF or DOCX file.');
-  }
+  uploadResumeVersion: (id: number, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<ResumeDetail>(`/api/resumes/${id}/versions`, { method: 'POST', body: form, timeoutMs: UPLOAD_TIMEOUT_MS });
+  },
+  renameResume: (id: number, title: string) => request<ResumeDetail>(`/api/resumes/${id}`, { method: 'PATCH', json: { title } }),
+  deleteResume: (id: number) => request<void>(`/api/resumes/${id}`, { method: 'DELETE' }),
+  saveProfile: (id: number, profile: ResumeProfile, baseVersionId: number) =>
+    request<ResumeDetail>(`/api/resumes/${id}/profile`, { method: 'PUT', json: { profile, base_version_id: baseVersionId } }),
+  resumeVersion: (id: number, versionId: number) => request<ResumeVersion & { raw_text: string }>(`/api/resumes/${id}/versions/${versionId}`),
+  retryResumeVersion: (id: number, versionId: number) => request<ResumeDetail>(`/api/resumes/${id}/versions/${versionId}/retry`, { method: 'POST' }),
 
-  const allResults: ResumeUploadResult[] = [];
+  // Jobs
+  jobs: (params: { q?: string; stage?: string; sort?: string; limit?: number; offset?: number } = {}) => request<Page<JobListItem>>(`/api/jobs${qs(params)}`),
+  job: (id: number) => request<Job>(`/api/jobs/${id}`),
+  createJob: (payload: { title: string; company?: string | null; location?: string | null; url?: string | null; description: string }) =>
+    request<Job>('/api/jobs', { method: 'POST', json: payload }),
+  updateJob: (
+    id: number,
+    payload: Partial<{ title: string; company: string | null; location: string | null; url: string | null; description: string; stage: ApplicationStage; notes: string | null; applied_on: string | null; follow_up_on: string | null }>,
+  ) => request<Job>(`/api/jobs/${id}`, { method: 'PATCH', json: payload }),
+  updateRequirements: (id: number, keep: { id: string; importance: Importance }[], baseRevision: number) =>
+    request<Job>(`/api/jobs/${id}/requirements`, { method: 'PUT', json: { keep, base_revision: baseRevision } }),
+  retryJob: (id: number) => request<Job>(`/api/jobs/${id}/retry`, { method: 'POST' }),
+  deleteJob: (id: number) => request<void>(`/api/jobs/${id}`, { method: 'DELETE' }),
 
-  // One request per file so each gets a full LLM budget and the UI can reflect real progress.
-  for (let index = 0; index < files.length; index += 1) {
-    const file = files[index];
-    const formData = new FormData();
-    formData.append('files', file);
+  // Analyses
+  analyses: (params: { resume_id?: number; job_id?: number; q?: string; verdict?: string; sort?: string; limit?: number; offset?: number } = {}) =>
+    request<Page<AnalysisListItem>>(`/api/analyses${qs(params)}`),
+  analysis: (id: number) => request<Analysis>(`/api/analyses/${id}`),
+  createAnalysis: (resume_id: number, job_id: number, resume_version_id?: number) =>
+    request<Analysis>('/api/analyses', { method: 'POST', json: { resume_id, job_id, resume_version_id } }),
+  deleteAnalysis: (id: number) => request<void>(`/api/analyses/${id}`, { method: 'DELETE' }),
+};
 
-    let result: ResumeUploadResult;
-    try {
-      const response = await request<{ evaluation_id: number; results: ResumeUploadResult[] }>(
-        `/api/evaluations/${id}/resumes`,
-        {
-          method: 'POST',
-          body: formData,
-          signal: options?.signal,
-        },
-        RESUME_UPLOAD_TIMEOUT_PER_FILE_MS,
-      );
-      result = response.results[0] ?? {
-        id: 0,
-        status: 'failed',
-        name: file.name,
-        error: 'The backend returned no result for this file.',
-      };
-    } catch (error) {
-      if (options?.signal?.aborted) throw error;
-      result = {
-        id: 0,
-        status: 'failed',
-        name: file.name,
-        error: error instanceof Error ? error.message : 'This file could not be processed.',
-      };
-    }
-    if (result) {
-      allResults.push(result);
-      options?.onFileComplete?.(index, result);
-    }
-  }
-
-  return { evaluation_id: id, results: allResults };
-}
-
-export async function fetchCandidate(id: number) {
-  return request<Record<string, unknown>>(`/api/candidates/${id}`);
-}
-
-export async function deleteCandidate(id: number) {
-  return request<{ deleted: boolean; candidate_id: number }>(`/api/candidates/${id}`, { method: 'DELETE' });
-}
-
-export async function deleteEvaluation(id: number) {
-  return request<{ deleted: boolean; evaluation_id: number }>(`/api/evaluations/${id}`, { method: 'DELETE' });
-}
-
-export async function exportEvaluation(id: number) {
-  return request<{ csv: string }>(`/api/evaluations/${id}/export`);
+export function errorMessage(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
+  if (error instanceof ApiError || error instanceof Error) return error.message || fallback;
+  return fallback;
 }

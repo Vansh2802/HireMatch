@@ -1,150 +1,117 @@
-import { useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
-import { BriefcaseBusiness, Eye, EyeOff } from 'lucide-react';
-import { login, register } from '../lib/api';
+import { Eye, EyeOff } from 'lucide-react';
+import { api, errorMessage } from '../lib/api';
+import { useSession } from '../lib/auth';
+import { Brand } from '../components/Brand';
+import { Button } from '../components/ui/Button';
+import { Field, Input } from '../components/ui/Field';
+import { InlineError } from '../components/ui/States';
 
-export default function Login() {
+export default function Login({ mode }: { mode: 'login' | 'register' }) {
+  const isRegister = mode === 'register';
+  const [params] = useSearchParams();
+  const next = params.get('next');
+  const destination = next && next.startsWith('/') && !next.startsWith('//') ? next : isRegister ? '/analyze' : '/dashboard';
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [isRegistering, setIsRegistering] = useState(false);
+  const session = useSession();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errors, setErrors] = useState<{ email?: string; password?: string; form?: string }>({});
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async (event: React.FormEvent) => {
+  useEffect(() => {
+    document.title = `${isRegister ? 'Create account' : 'Sign in'} · HireMatch`;
+    setErrors({});
+  }, [isRegister]);
+
+  if (session.data) return <Navigate to={destination} replace />;
+
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    setError(null);
-    setIsSubmitting(true);
+    if (submitting) return;
+    const nextErrors: typeof errors = {};
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(email.trim())) nextErrors.email = 'Enter a valid email address.';
+    if (password.length < 8) nextErrors.password = 'Use at least 8 characters.';
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    setSubmitting(true);
     try {
-      if (isRegistering) {
-        await register(email, password);
-      } else {
-        await login(email, password);
-      }
-      await queryClient.invalidateQueries({ queryKey: ['me'] });
-      navigate('/dashboard');
-    } catch (submissionError) {
-      setError(submissionError instanceof Error ? submissionError.message : 'Authentication failed.');
-    } finally {
-      setIsSubmitting(false);
+      const result = isRegister ? await api.register(email.trim(), password) : await api.login(email.trim(), password);
+      queryClient.setQueryData(['me'], result.user);
+      navigate(destination, { replace: true });
+    } catch (error) {
+      setErrors({ form: errorMessage(error) });
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-ivory-100 px-4 py-12">
-      <div className="w-full max-w-md animate-fade-in">
-        {/* Logo */}
-        <div className="mb-8 flex flex-col items-center text-center">
-          <Link to="/" className="mb-6 flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-600 text-white shadow-sm">
-              <BriefcaseBusiness size={20} />
-            </div>
-            <span className="text-xl font-bold tracking-tight text-ink-primary">HireMatch</span>
-          </Link>
-          <h1 className="page-heading">
-            {isRegistering ? 'Create your account' : 'Sign in to HireMatch'}
-          </h1>
-          <p className="mt-2 text-sm text-ink-secondary">
-            {isRegistering
-              ? 'Start evaluating candidates in minutes.'
-              : 'Candidate data is private to your account.'}
-          </p>
+    <div className="grid min-h-screen lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+      <aside className="hidden flex-col justify-between bg-obsidian p-10 text-ink-inverse lg:flex">
+        <Brand inverse />
+        <div className="max-w-md">
+          <p className="type-condensed text-4xl font-semibold leading-tight">Know which requirements your resume proves — before you apply.</p>
+          <p className="mt-4 text-ink-inverse-soft">Upload a resume, paste a job description, and review the evidence for each requirement.</p>
         </div>
-
-        {/* Card */}
-        <div className="card p-6 sm:p-8">
-          <form className="space-y-4" onSubmit={handleSubmit} noValidate>
-            {/* Email */}
-            <div>
-              <label htmlFor="email" className="label">Email address</label>
-              <input
-                id="email"
-                type="email"
-                required
-                autoComplete="email"
-                autoFocus
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="input"
-                placeholder="you@company.com"
-                disabled={isSubmitting}
-              />
-            </div>
-
-            {/* Password */}
-            <div>
-              <label htmlFor="password" className="label">Password</label>
+        <p className="text-sm text-ink-inverse-soft">Your original file isn’t stored. You can delete your data at any time.</p>
+      </aside>
+      <main id="main" className="flex flex-col px-4 py-8 sm:px-10">
+        <div className="lg:hidden">
+          <Brand />
+        </div>
+        <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center py-10">
+          <h1 className="page-title">{isRegister ? 'Create your account' : 'Sign in'}</h1>
+          <p className="mt-2 text-ink-soft">
+            {isRegister ? 'Already have an account? ' : 'New to HireMatch? '}
+            <Link to={isRegister ? `/login${next ? `?next=${encodeURIComponent(next)}` : ''}` : `/register${next ? `?next=${encodeURIComponent(next)}` : ''}`} className="link">
+              {isRegister ? 'Sign in' : 'Create an account'}
+            </Link>
+          </p>
+          <form onSubmit={submit} noValidate className="mt-8 space-y-5">
+            <InlineError message={errors.form} />
+            <Field label="Email" error={errors.email}>
+              <Input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoFocus />
+            </Field>
+            <Field label="Password" error={errors.password} hint={isRegister ? 'At least 8 characters.' : undefined}>
+              {(control) => (
               <div className="relative">
-                <input
-                  id="password"
+                <Input
+                  {...control}
                   type={showPassword ? 'text' : 'password'}
+                  autoComplete={isRegister ? 'new-password' : 'current-password'}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="pr-10"
                   required
                   minLength={8}
-                  autoComplete={isRegistering ? 'new-password' : 'current-password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="input pr-10"
-                  placeholder={isRegistering ? 'At least 8 characters' : '••••••••'}
-                  disabled={isSubmitting}
+                  maxLength={128}
                 />
                 <button
                   type="button"
+                  onClick={() => setShowPassword((value) => !value)}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1.5 text-ink-faint hover:text-ink"
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-muted transition hover:text-ink-secondary"
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
-              {isRegistering && (
-                <p className="mt-1 text-xs text-ink-secondary">Minimum 8 characters required.</p>
               )}
-            </div>
-
-            {/* Error */}
-            {error && (
-              <div className="alert-error" role="alert">{error}</div>
+            </Field>
+            <Button type="submit" className="w-full" loading={submitting}>
+              {isRegister ? 'Create account' : 'Sign in'}
+            </Button>
+            {isRegister && (
+              <p className="text-sm text-ink-faint">
+                By creating an account you agree to the <Link to="/terms" className="link">terms</Link> and <Link to="/privacy" className="link">privacy notice</Link>.
+              </p>
             )}
-
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="btn-primary w-full py-2.5"
-            >
-              {isSubmitting ? (
-                <>
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                  Please wait…
-                </>
-              ) : (
-                isRegistering ? 'Create account' : 'Sign in'
-              )}
-            </button>
           </form>
-
-          <div className="divider mt-6" />
-
-          <p className="mt-5 text-center text-sm text-ink-secondary">
-            {isRegistering ? 'Already have an account?' : "Don't have an account?"}{' '}
-            <button
-              type="button"
-              onClick={() => { setIsRegistering((v) => !v); setError(null); }}
-              className="font-semibold text-brand-600 transition hover:text-brand-700"
-            >
-              {isRegistering ? 'Sign in' : 'Register'}
-            </button>
-          </p>
         </div>
-
-        {/* Back to landing */}
-        <p className="mt-6 text-center text-xs text-ink-muted">
-          <Link to="/" className="transition hover:text-ink-secondary">← Back to homepage</Link>
-        </p>
-      </div>
+      </main>
     </div>
   );
 }

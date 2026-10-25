@@ -1,18 +1,16 @@
-from io import BytesIO
-
-from docx import Document
+from fixtures import RESUME_TEXT, docx_bytes, text_pdf_bytes
 
 from app.services.document_parser import parse_uploaded_document
 
 
-def test_docx_parsing_uses_in_memory_stream():
-    buffer = BytesIO()
-    document = Document()
-    document.add_paragraph('Jordan Lee')
-    document.add_paragraph('Python engineer with FastAPI experience.')
-    document.save(buffer)
+def test_docx_parsing_keeps_lines_and_reports_metadata():
+    parsed = parse_uploaded_document('resume.docx', docx_bytes(RESUME_TEXT))
+    assert parsed['text'].startswith('Jordan Rivera\nBackend Engineer')
+    assert parsed['extension'] == '.docx'
+    assert len(parsed['sha256']) == 64
 
-    parsed = parse_uploaded_document('resume.docx', buffer.getvalue())
 
-    assert 'Jordan Lee' in parsed['text']
-    assert 'Python' in parsed['text']
+def test_pdf_parsing_extracts_text():
+    parsed = parse_uploaded_document('resume.pdf', text_pdf_bytes(RESUME_TEXT))
+    assert 'Northwind Analytics' in parsed['text']
+    assert parsed['pages'] == 1

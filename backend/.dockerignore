@@ -1,0 +1,13 @@
+# Never bake local data, secrets or caches into the image.
+*.db
+*.db-journal
+.env
+.env.*
+uploads/
+temp/
+tests/
+__pycache__/
+*.py[oc]
+.pytest_cache/
+.ruff_cache/
+pytest.ini
